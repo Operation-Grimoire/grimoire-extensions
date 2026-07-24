@@ -19,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -37,13 +39,19 @@ abstract class WPNovelsSource :
     ChapterListSource,
     PageListSource {
 
+    /**
+     * Post-type archive slug for the browse listings. Madara's novel child themes
+     * rename it per site (default "novel"; e.g. "series", "novels", "manga", "cont").
+     */
+    protected open val novelPathSegment: String = "novel"
+
     override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        get("$baseUrl/novel?m_orderby=views&paged=$page").asJsoup()
+        get("$baseUrl/$novelPathSegment?m_orderby=views&paged=$page").asJsoup()
             .select("div.page-item-detail").map { it.toListNovel() }
     }
 
     override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        get("$baseUrl/novel?m_orderby=latest&paged=$page").asJsoup()
+        get("$baseUrl/$novelPathSegment?m_orderby=latest&paged=$page").asJsoup()
             .select("div.page-item-detail").map { it.toListNovel() }
     }
 
@@ -122,7 +130,7 @@ abstract class WPNovelsSource :
                     ?: document.selectFirst("div.manga-excerpt")
                 )?.richDescription()?.takeIf { it.isNotBlank() },
             genres = document.select("div.genres-content a").map { it.text() },
-            status = document.selectFirst("div.summary-content")?.text().toNovelStatus(),
+            status = statusTextOf(document).toNovelStatus(),
             rating = ratingValue,
             ratingCount = ratingCount,
             initialized = true,
@@ -131,15 +139,47 @@ abstract class WPNovelsSource :
 
     // Madara lists chapters newest-first; the reader expects ascending order, so reverse.
     override suspend fun getChapterList(novel: Novel): List<Chapter> = withContext(Dispatchers.IO) {
-        get(resolveUrl(novel.url)).asJsoup()
-            .select("li.wp-manga-chapter").map { chapterFromElement(it) }.reversed()
+        val url = resolveUrl(novel.url)
+        var rows = get(url).asJsoup().select("li.wp-manga-chapter")
+        if (rows.isEmpty()) {
+            // Modern Madara renders the chapter list lazily; the novel page ships
+            // without it and the theme POSTs to `<novel>/ajax/chapters/` to fetch it.
+            val ajaxUrl = url.trimEnd('/') + "/ajax/chapters/"
+            rows = runCatching {
+                client.newCall(
+                    Request.Builder().url(ajaxUrl).post(FormBody.Builder().build()).build(),
+                ).execute().use { it.asJsoup() }.select("li.wp-manga-chapter")
+            }.getOrDefault(rows)
+        }
+        rows.map { chapterFromElement(it) }.reversed()
     }
 
     /** Parse one chapter-list row. Subclasses override for locked/dated rows. */
-    protected open fun chapterFromElement(element: Element): Chapter = Chapter(
-        url = element.selectFirst("a")!!.attr("href"),
-        name = element.selectFirst("a")!!.text().trim(),
-    )
+    protected open fun chapterFromElement(element: Element): Chapter {
+        val anchor = element.selectFirst("a")!!
+        val name = anchor.text().trim()
+        return Chapter(
+            url = anchor.attr("href"),
+            name = name,
+            // Pull the first number out of the label ("الفصل 12", "Chapter 12.5",
+            // or a bare "12") so the host can order/track by number.
+            chapterNumber = CHAPTER_NUMBER_REGEX.find(name)?.value?.toFloatOrNull() ?: -1f,
+        )
+    }
+
+    /**
+     * Status value from the Madara info table, matched by its heading ("Status" /
+     * "الحالة") rather than position — the first `.summary-content` is usually the
+     * rating/rank row, not the status. Falls back to the `.post-status` block.
+     */
+    private fun statusTextOf(document: Document): String? =
+        document.select("div.post-content_item")
+            .firstOrNull {
+                it.selectFirst("div.summary-heading")?.text().orEmpty()
+                    .let { h -> h.contains("Status", ignoreCase = true) || h.contains("الحالة") }
+            }
+            ?.selectFirst("div.summary-content")?.text()
+            ?: document.selectFirst("div.post-status div.summary-content")?.text()
 
     override suspend fun getPageList(chapter: Chapter): List<NovelPage> = withContext(Dispatchers.IO) {
         pagesFromDocument(get(resolveUrl(chapter.url)).asJsoup())
@@ -148,8 +188,11 @@ abstract class WPNovelsSource :
     // Madara novel variants put paragraphs in ".reading-content" or a ".text-left" wrapper.
     /** Parse chapter content into pages. Subclasses override for images / other layouts. */
     protected open fun pagesFromDocument(document: Document): List<NovelPage> =
-        document.select("div.reading-content p, div.reading-content div.text-left p")
-            .mapIndexed { index, element -> element.toPage(index) }
+        document.select(
+            "div.reading-content p, div.reading-content div.text-left p, " +
+                // Some Madara text themes wrap prose in `.reading-content-wrap > .text-left`.
+                "div.reading-content-wrap div.text-left p",
+        ).mapIndexed { index, element -> element.toPage(index) }
 
     // --- Filters -------------------------------------------------------------
 
@@ -261,10 +304,16 @@ abstract class WPNovelsSource :
         contains("Completed", ignoreCase = true) -> NovelStatus.COMPLETED
         contains("Hiatus", ignoreCase = true) -> NovelStatus.HIATUS
         contains("Cancelled", ignoreCase = true) -> NovelStatus.CANCELLED
+        // Arabic status labels used by Arabic Madara themes.
+        contains("مستمر") -> NovelStatus.ONGOING       // ongoing
+        contains("مكتمل") -> NovelStatus.COMPLETED     // completed
+        contains("متوقف") -> NovelStatus.HIATUS        // on hold / paused
+        contains("ملغ") -> NovelStatus.CANCELLED       // cancelled (ملغى/ملغية)
         else -> NovelStatus.UNKNOWN
     }
 
     private companion object {
+        val CHAPTER_NUMBER_REGEX = Regex("""\d+(?:\.\d+)?""")
         val STATUS_SLUGS = arrayOf("on-going", "end", "canceled", "on-hold", "upcoming")
         val SORT_SLUGS = arrayOf("", "latest", "alphabet", "trending", "views", "new-manga")
         val ADULT_SLUGS = arrayOf("", "0", "1")

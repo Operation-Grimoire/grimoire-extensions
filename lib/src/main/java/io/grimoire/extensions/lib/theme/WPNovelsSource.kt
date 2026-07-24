@@ -283,6 +283,11 @@ abstract class WPNovelsSource :
         contains("Completed", ignoreCase = true) -> NovelStatus.COMPLETED
         contains("Hiatus", ignoreCase = true) -> NovelStatus.HIATUS
         contains("Cancelled", ignoreCase = true) -> NovelStatus.CANCELLED
+        // Arabic status labels used by Arabic Madara themes.
+        contains("مستمر") -> NovelStatus.ONGOING       // ongoing
+        contains("مكتمل") -> NovelStatus.COMPLETED     // completed
+        contains("متوقف") -> NovelStatus.HIATUS        // on hold / paused
+        contains("ملغ") -> NovelStatus.CANCELLED       // cancelled (ملغى/ملغية)
         else -> NovelStatus.UNKNOWN
     }
 

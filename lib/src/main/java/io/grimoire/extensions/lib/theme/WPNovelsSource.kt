@@ -130,7 +130,7 @@ abstract class WPNovelsSource :
                     ?: document.selectFirst("div.manga-excerpt")
                 )?.richDescription()?.takeIf { it.isNotBlank() },
             genres = document.select("div.genres-content a").map { it.text() },
-            status = document.selectFirst("div.summary-content")?.text().toNovelStatus(),
+            status = statusTextOf(document).toNovelStatus(),
             rating = ratingValue,
             ratingCount = ratingCount,
             initialized = true,
@@ -155,10 +155,31 @@ abstract class WPNovelsSource :
     }
 
     /** Parse one chapter-list row. Subclasses override for locked/dated rows. */
-    protected open fun chapterFromElement(element: Element): Chapter = Chapter(
-        url = element.selectFirst("a")!!.attr("href"),
-        name = element.selectFirst("a")!!.text().trim(),
-    )
+    protected open fun chapterFromElement(element: Element): Chapter {
+        val anchor = element.selectFirst("a")!!
+        val name = anchor.text().trim()
+        return Chapter(
+            url = anchor.attr("href"),
+            name = name,
+            // Pull the first number out of the label ("الفصل 12", "Chapter 12.5",
+            // or a bare "12") so the host can order/track by number.
+            chapterNumber = CHAPTER_NUMBER_REGEX.find(name)?.value?.toFloatOrNull() ?: -1f,
+        )
+    }
+
+    /**
+     * Status value from the Madara info table, matched by its heading ("Status" /
+     * "الحالة") rather than position — the first `.summary-content` is usually the
+     * rating/rank row, not the status. Falls back to the `.post-status` block.
+     */
+    private fun statusTextOf(document: Document): String? =
+        document.select("div.post-content_item")
+            .firstOrNull {
+                it.selectFirst("div.summary-heading")?.text().orEmpty()
+                    .let { h -> h.contains("Status", ignoreCase = true) || h.contains("الحالة") }
+            }
+            ?.selectFirst("div.summary-content")?.text()
+            ?: document.selectFirst("div.post-status div.summary-content")?.text()
 
     override suspend fun getPageList(chapter: Chapter): List<NovelPage> = withContext(Dispatchers.IO) {
         pagesFromDocument(get(resolveUrl(chapter.url)).asJsoup())
@@ -292,6 +313,7 @@ abstract class WPNovelsSource :
     }
 
     private companion object {
+        val CHAPTER_NUMBER_REGEX = Regex("""\d+(?:\.\d+)?""")
         val STATUS_SLUGS = arrayOf("on-going", "end", "canceled", "on-hold", "upcoming")
         val SORT_SLUGS = arrayOf("", "latest", "alphabet", "trending", "views", "new-manga")
         val ADULT_SLUGS = arrayOf("", "0", "1")

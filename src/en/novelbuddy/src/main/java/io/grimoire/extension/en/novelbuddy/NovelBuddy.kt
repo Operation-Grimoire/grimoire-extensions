@@ -21,8 +21,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.jsoup.Jsoup
+import java.time.Instant
 
-@SourceInfo(name = "NovelBuddy", lang = Language.EN, baseUrl = "https://novelbuddy.com", versionCode = 8)
+@SourceInfo(name = "NovelBuddy", lang = Language.EN, baseUrl = "https://novelbuddy.me", versionCode = 10)
 class NovelBuddy :
     HttpSource(),
     PopularSource,
@@ -34,9 +35,9 @@ class NovelBuddy :
 
     override val name = "NovelBuddy"
     override val lang = Language.EN
-    override val baseUrl = "https://novelbuddy.com"
+    override val baseUrl = "https://novelbuddy.me"
 
-    private val apiBase = "https://api.novelbuddy.com"
+    private val apiBase = "https://api.novelbuddy.me"
 
     private var loadedGenres: List<Pair<String, String>> = emptyList()
 
@@ -118,10 +119,12 @@ class NovelBuddy :
         (0 until chapters.length()).map { i ->
             val ch = chapters.getJSONObject(i)
             Chapter(
-                url = "/$slug/${ch.getString("slug")}",
-                name = ch.optString("name").ifEmpty { "Chapter ${ch.optString("chap")}" },
-                chapterNumber = ch.optString("chap").toFloatOrNull() ?: -1f,
-                uploadDate = ch.optLong("updatedAt", 0L) * 1000L,
+                // The API now returns the full chapter path; fall back to composing it
+                // from the manga + chapter slug for resilience.
+                url = ch.optString("url").ifEmpty { "/$slug/${ch.getString("slug")}" },
+                name = ch.optString("name").ifEmpty { "Chapter ${ch.optString("number")}" },
+                chapterNumber = ch.optDouble("number", -1.0).toFloat(),
+                uploadDate = parseIsoDate(ch.optString("updated_at")),
             )
         }.reversed()
     }
@@ -178,6 +181,10 @@ class NovelBuddy :
         language = lang,
         thumbnailUrl = item.optString("cover").takeIf { it.isNotEmpty() },
     )
+
+    // Chapter timestamps are ISO-8601 (e.g. "2025-05-12T06:03:41.000Z"); 0 when absent/unparseable.
+    private fun parseIsoDate(value: String): Long =
+        if (value.isEmpty()) 0L else runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
 
     private fun String.toNovelStatus() = when (lowercase()) {
         "ongoing" -> NovelStatus.ONGOING

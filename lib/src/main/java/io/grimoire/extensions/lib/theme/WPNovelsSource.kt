@@ -19,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -37,13 +39,19 @@ abstract class WPNovelsSource :
     ChapterListSource,
     PageListSource {
 
+    /**
+     * Post-type archive slug for the browse listings. Madara's novel child themes
+     * rename it per site (default "novel"; e.g. "series", "novels", "manga", "cont").
+     */
+    protected open val novelPathSegment: String = "novel"
+
     override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        get("$baseUrl/novel?m_orderby=views&paged=$page").asJsoup()
+        get("$baseUrl/$novelPathSegment?m_orderby=views&paged=$page").asJsoup()
             .select("div.page-item-detail").map { it.toListNovel() }
     }
 
     override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        get("$baseUrl/novel?m_orderby=latest&paged=$page").asJsoup()
+        get("$baseUrl/$novelPathSegment?m_orderby=latest&paged=$page").asJsoup()
             .select("div.page-item-detail").map { it.toListNovel() }
     }
 
@@ -131,8 +139,19 @@ abstract class WPNovelsSource :
 
     // Madara lists chapters newest-first; the reader expects ascending order, so reverse.
     override suspend fun getChapterList(novel: Novel): List<Chapter> = withContext(Dispatchers.IO) {
-        get(resolveUrl(novel.url)).asJsoup()
-            .select("li.wp-manga-chapter").map { chapterFromElement(it) }.reversed()
+        val url = resolveUrl(novel.url)
+        var rows = get(url).asJsoup().select("li.wp-manga-chapter")
+        if (rows.isEmpty()) {
+            // Modern Madara renders the chapter list lazily; the novel page ships
+            // without it and the theme POSTs to `<novel>/ajax/chapters/` to fetch it.
+            val ajaxUrl = url.trimEnd('/') + "/ajax/chapters/"
+            rows = runCatching {
+                client.newCall(
+                    Request.Builder().url(ajaxUrl).post(FormBody.Builder().build()).build(),
+                ).execute().use { it.asJsoup() }.select("li.wp-manga-chapter")
+            }.getOrDefault(rows)
+        }
+        rows.map { chapterFromElement(it) }.reversed()
     }
 
     /** Parse one chapter-list row. Subclasses override for locked/dated rows. */
@@ -148,8 +167,11 @@ abstract class WPNovelsSource :
     // Madara novel variants put paragraphs in ".reading-content" or a ".text-left" wrapper.
     /** Parse chapter content into pages. Subclasses override for images / other layouts. */
     protected open fun pagesFromDocument(document: Document): List<NovelPage> =
-        document.select("div.reading-content p, div.reading-content div.text-left p")
-            .mapIndexed { index, element -> element.toPage(index) }
+        document.select(
+            "div.reading-content p, div.reading-content div.text-left p, " +
+                // Some Madara text themes wrap prose in `.reading-content-wrap > .text-left`.
+                "div.reading-content-wrap div.text-left p",
+        ).mapIndexed { index, element -> element.toPage(index) }
 
     // --- Filters -------------------------------------------------------------
 

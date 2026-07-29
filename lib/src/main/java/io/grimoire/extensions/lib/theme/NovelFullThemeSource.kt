@@ -92,6 +92,22 @@ abstract class NovelFullThemeSource :
         }
     }
 
+    override suspend fun getPageCount(novel: Novel): Int? = withContext(Dispatchers.IO) {
+        val doc = get(resolveUrl(novel.url) + "?page=1").asJsoup()
+        // Only claim a count when the pagination widget explicitly shows one;
+        // a missing widget (single-page or unfamiliar layout) returns null so
+        // the host falls back to its heuristic walk instead of trusting us.
+        val pagination = doc.selectFirst("ul.pagination") ?: return@withContext null
+        val fromLastLink = pagination.select("li.last a, li a:contains(Last)")
+            .firstNotNullOfOrNull { link ->
+                PAGE_PARAM.find(link.attr("href"))?.groupValues?.get(1)?.toIntOrNull()
+            }
+        fromLastLink
+            ?: pagination.select("li a")
+                .mapNotNull { it.text().trim().toIntOrNull() }
+                .maxOrNull()
+    }
+
     override suspend fun getPageList(chapter: Chapter): List<NovelPage> = withContext(Dispatchers.IO) {
         // Drop empty `<p></p>` spacers (no text, no image) that would surface as
         // blank reader pages; keep paragraphs with visible text OR an image.
@@ -165,3 +181,5 @@ abstract class NovelFullThemeSource :
         private const val ANY = "Any"
     }
 }
+
+private val PAGE_PARAM = Regex("""[?&]page=(\d+)""")

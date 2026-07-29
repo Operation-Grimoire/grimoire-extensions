@@ -93,7 +93,7 @@ abstract class NovelFullThemeSource :
     }
 
     override suspend fun getPageCount(novel: Novel): Int? = withContext(Dispatchers.IO) {
-        val doc = get("${'$'}{resolveUrl(novel.url)}?page=1").asJsoup()
+        val doc = get(resolveUrl(novel.url) + "?page=1").asJsoup()
         // Only claim a count when the pagination widget explicitly shows one;
         // a missing widget (single-page or unfamiliar layout) returns null so
         // the host falls back to its heuristic walk instead of trusting us.

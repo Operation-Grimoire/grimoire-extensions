@@ -25,7 +25,7 @@ import java.net.URLEncoder
     name = "Light Novels Translations",
     lang = Language.EN,
     baseUrl = "https://lightnovelstranslations.com",
-    versionCode = 9,
+    versionCode = 10,
     novelUpdatesGroups = ["Light Novels Translations"],
 )
 class LightNovelsTranslations :

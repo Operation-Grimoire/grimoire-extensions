@@ -8,7 +8,7 @@ import io.grimoire.extensions.lib.theme.NovelFullThemeSource
     name = "NovGo",
     lang = Language.EN,
     baseUrl = "https://novgo.net",
-    versionCode = 10,
+    versionCode = 11,
 )
 class NovGo : NovelFullThemeSource() {
     override val name = "NovGo"

@@ -8,7 +8,7 @@ import io.grimoire.api.source.SourceInfo
 import io.grimoire.extensions.lib.theme.WPNovelsSource
 import org.jsoup.nodes.Document
 
-@SourceInfo(name = "Cenele", lang = Language.AR, baseUrl = "https://cenele.com", versionCode = 3)
+@SourceInfo(name = "Cenele", lang = Language.AR, baseUrl = "https://cenele.com", versionCode = 4)
 class Cenele : WPNovelsSource() {
     override val name = "Cenele"
     override val lang = Language.AR

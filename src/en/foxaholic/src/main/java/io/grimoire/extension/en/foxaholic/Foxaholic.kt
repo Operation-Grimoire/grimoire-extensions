@@ -21,7 +21,7 @@ import java.util.Locale
     name = "Foxaholic",
     lang = Language.EN,
     baseUrl = "https://www.foxaholic.com",
-    versionCode = 14,
+    versionCode = 15,
     novelUpdatesGroups = ["Foxaholic"],
 )
 class Foxaholic : WPNovelsSource() {

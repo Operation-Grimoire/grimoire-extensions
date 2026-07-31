@@ -13,7 +13,7 @@ import io.grimoire.extensions.lib.theme.PatreonSource
     name = "Cale",
     lang = Language.EN,
     baseUrl = "https://www.patreon.com",
-    versionCode = 3,
+    versionCode = 4,
     novelUpdatesGroups = ["Cale Red Hair"],
 )
 class Caleredhair : PatreonSource() {

@@ -23,7 +23,7 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.time.Instant
 
-@SourceInfo(name = "NovelBuddy", lang = Language.EN, baseUrl = "https://novelbuddy.me", versionCode = 11)
+@SourceInfo(name = "NovelBuddy", lang = Language.EN, baseUrl = "https://novelbuddy.me", versionCode = 12)
 class NovelBuddy :
     HttpSource(),
     PopularSource,

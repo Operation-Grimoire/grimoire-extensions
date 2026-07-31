@@ -1,0 +1,76 @@
+name: "\U0001F41B Broken extension"
+description: A source stopped working — errors, empty lists, missing chapters, or bad content.
+title: "[Broken] <source name>: <short summary>"
+labels: ["bug"]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: The extension/source that is broken.
+      placeholder: e.g. NovelFull (en)
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: Shown on the Extensions page in the app.
+      placeholder: e.g. 1.0.4
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: More → About in the app.
+      placeholder: e.g. 0.0.36-beta.276
+    validations:
+      required: true
+  - type: dropdown
+    id: broken-part
+    attributes:
+      label: What is broken?
+      multiple: true
+      options:
+        - Browsing / novel list is empty or errors
+        - Search returns nothing or errors
+        - Novel details don't load
+        - Chapter list is missing, incomplete, or wrong
+        - Chapter content is empty, garbled, or cut off
+        - Covers / images don't load
+        - Login doesn't work
+        - Cloudflare / captcha wall
+        - Extension won't install or crashes the app
+        - Other (explain below)
+    validations:
+      required: true
+  - type: input
+    id: example-url
+    attributes:
+      label: Example URL
+      description: A novel or chapter URL on the source's website where the problem shows.
+      placeholder: https://…
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happens?
+      description: What you did, what you expected, and what happened instead. Paste any error message shown by the app verbatim.
+      placeholder: |
+        1. Open …
+        2. Tap …
+        Expected: …
+        Actual: … (error text if any)
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before reporting
+      options:
+        - label: I updated the extension and the app to the latest versions and it is still broken.
+          required: true
+        - label: The website itself works in a normal browser.
+          required: true
+        - label: I searched existing issues and this isn't already reported.
+          required: true

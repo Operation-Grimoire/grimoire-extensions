@@ -1,0 +1,51 @@
+name: "\U00002728 Extension request"
+description: Request support for a new novel source.
+title: "[Request] <site name>"
+labels: ["enhancement"]
+body:
+  - type: input
+    id: site-name
+    attributes:
+      label: Site name
+      placeholder: e.g. NovelBin
+    validations:
+      required: true
+  - type: input
+    id: site-url
+    attributes:
+      label: Site URL
+      placeholder: https://…
+    validations:
+      required: true
+  - type: input
+    id: language
+    attributes:
+      label: Content language
+      placeholder: e.g. English, Arabic, multi
+    validations:
+      required: true
+  - type: dropdown
+    id: account
+    attributes:
+      label: Does reading require an account or payment?
+      options:
+        - "No — everything is free and public"
+        - "Account needed for some content"
+        - "Account needed for everything"
+        - "Some chapters are paid / locked"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything that helps — Cloudflare protection, similarity to an already-supported site (same theme/layout), why this source is worth adding.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before requesting
+      options:
+        - label: I searched existing issues and this site hasn't been requested.
+          required: true
+        - label: The site isn't already supported by an installed extension.
+          required: true

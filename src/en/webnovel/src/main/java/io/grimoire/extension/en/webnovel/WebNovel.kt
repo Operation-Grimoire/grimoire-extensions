@@ -54,7 +54,7 @@ import java.net.URLEncoder
     name = "Webnovel",
     lang = Language.EN,
     baseUrl = "https://www.webnovel.com",
-    versionCode = 28,
+    versionCode = 29,
     novelUpdatesGroups = ["Webnovel"],
 )
 class WebNovel :

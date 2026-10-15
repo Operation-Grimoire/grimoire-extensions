@@ -41,7 +41,7 @@ import java.io.IOException
     name = "Azure Chronicles",
     lang = Language.EN,
     baseUrl = "https://azurechronicles.com",
-    versionCode = 8,
+    versionCode = 9,
     novelUpdatesGroups = ["Azure Chronicles"],
 )
 class AzureChronicles :
@@ -60,6 +60,11 @@ class AzureChronicles :
 
     @Volatile
     private var nonce: String? = null
+
+    // The live-search endpoint is gated by its own nonce (`acData.nonce`),
+    // distinct from the archive-filter one above.
+    @Volatile
+    private var searchNonce: String? = null
 
     @Volatile
     private var cachedFilters: List<Filter<*>> = emptyList()
@@ -98,13 +103,10 @@ class AzureChronicles :
                 }
                 // The ajax endpoints are single-page.
                 page != 1 -> emptyList()
-                !anyFilter -> {
-                    val url = adminAjax()
-                        .addQueryParameter("action", "ac_search_series")
-                        .addQueryParameter("q", q)
-                        .addQueryParameter(PAGE_MARKER, page.toString())
-                        .build()
-                    parseSearchJson(getBody(url.toString()))
+                // A stale nonce answers "-1"; refetch it once and retry.
+                !anyFilter -> searchSeries(q, page) ?: run {
+                    searchNonce = null
+                    searchSeries(q, page).orEmpty()
                 }
                 else -> {
                     val b = adminAjax()
@@ -374,6 +376,29 @@ class AzureChronicles :
         if (fetched != null) nonce = fetched
         return fetched.orEmpty()
     }
+
+    /** Returns null when the endpoint rejects the nonce ("-1"). */
+    private suspend fun searchSeries(q: String, page: Int): List<Novel>? {
+        val url = adminAjax()
+            .addQueryParameter("action", "ac_search_series")
+            .addQueryParameter("_ajax_nonce", ensureSearchNonce())
+            .addQueryParameter("q", q)
+            .addQueryParameter(PAGE_MARKER, page.toString())
+            .build()
+        val raw = getBody(url.toString())
+        return if (raw.trim() == "-1") null else parseSearchJson(raw)
+    }
+
+    private suspend fun ensureSearchNonce(): String {
+        searchNonce?.let { return it }
+        val fetched = runCatching { extractSearchNonce(getBody("$baseUrl/")) }.getOrNull()
+        if (fetched != null) searchNonce = fetched
+        return fetched.orEmpty()
+    }
+
+    private fun extractSearchNonce(html: String): String? =
+        Regex("""action=ac_search_series&(?:amp;)?_ajax_nonce=([a-f0-9]+)""").find(html)?.groupValues?.get(1)
+            ?: Regex("""\bnonce:\s*["']([a-f0-9]+)["']""").find(html)?.groupValues?.get(1)
 
     private fun extractNonce(html: String): String? =
         Regex("""\bconst\s+nonce\s*=\s*["']([a-f0-9]+)["']""").find(html)?.groupValues?.get(1)

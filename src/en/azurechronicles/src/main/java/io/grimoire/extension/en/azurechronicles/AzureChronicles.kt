@@ -23,7 +23,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -41,7 +43,7 @@ import java.io.IOException
     name = "Azure Chronicles",
     lang = Language.EN,
     baseUrl = "https://azurechronicles.com",
-    versionCode = 9,
+    versionCode = 10,
     novelUpdatesGroups = ["Azure Chronicles"],
 )
 class AzureChronicles :
@@ -265,9 +267,53 @@ class AzureChronicles :
 
     // --- Chapter list ---------------------------------------------------------
 
+    // The novel page only embeds the newest 100 chapters; the rest come from the
+    // nonce-gated `ac_novel_chapter_page` action, 100 rows per page.
     override suspend fun getChapterList(novel: Novel): List<Chapter> = withContext(Dispatchers.IO) {
-        val doc = get(resolveUrl(novel.url)).asJsoup()
-        val chapters = doc.select("#chapters a.chapter-el").mapNotNull { link ->
+        val html = getBody(resolveUrl(novel.url))
+        val doc = Jsoup.parse(html, resolveUrl(novel.url))
+        val novelId = NOVEL_ID_REGEX.find(html)?.groupValues?.get(1)
+            ?: doc.body().classNames().firstNotNullOfOrNull { it.removePrefix("postid-").takeIf { id -> id != it } }
+        val pageNonce = extractSearchNonce(html)?.also { searchNonce = it }
+        val chapters = if (novelId == null || pageNonce == null) {
+            parseChapterRows(doc)
+        } else {
+            val first = chapterPage(novelId, pageNonce, 1)
+            val maxPages = first.optInt("max_pages", 1)
+            (listOf(first) + (2..maxPages).map { chapterPage(novelId, pageNonce, it) })
+                .flatMap { parseChapterRows(Jsoup.parse(it.optString("html"), baseUrl)) }
+        }.distinctBy { it.url }
+        // The list renders newest-first; the reader expects ascending order.
+        val ordered = if (chapters.any { it.chapterNumber >= 0f }) {
+            chapters.sortedBy { it.chapterNumber }
+        } else {
+            chapters.reversed()
+        }
+        ordered.mapIndexed { i, ch ->
+            if (ch.chapterNumber >= 0f) ch else ch.copy(chapterNumber = (i + 1).toFloat())
+        }
+    }
+
+    private fun chapterPage(novelId: String, nonce: String, page: Int): JSONObject {
+        val body = FormBody.Builder()
+            .add("action", "ac_novel_chapter_page")
+            .add("nonce", nonce)
+            .add("novel_id", novelId)
+            .add("chapter_page", page.toString())
+            .add("order", "DESC")
+            .add("search", "")
+            .build()
+        val request = Request.Builder().url(adminAjax().build()).post(body).build()
+        val raw = client.newCall(request).execute().use { it.body?.string().orEmpty() }
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+        // Fail loudly rather than return a truncated list the host would diff
+        // against the library.
+        check(json?.optBoolean("success") == true) { "Azure Chronicles chapter page $page failed" }
+        return json!!.getJSONObject("data")
+    }
+
+    private fun parseChapterRows(root: Element): List<Chapter> =
+        root.select("a.chapter-el").mapNotNull { link ->
             val href = link.attr("data-ac-href").trim().ifEmpty { link.attr("href").trim() }
                 .takeIf { it.isNotEmpty() && "/chapter-" in it } ?: return@mapNotNull null
             val label = link.attr("data-ac-chapter-label").trim()
@@ -288,17 +334,7 @@ class AzureChronicles :
                 uploadDate = parseDate(dateText),
                 locked = locked,
             )
-        }.distinctBy { it.url }
-        // The list renders newest-first; the reader expects ascending order.
-        val ordered = if (chapters.any { it.chapterNumber >= 0f }) {
-            chapters.sortedBy { it.chapterNumber }
-        } else {
-            chapters.reversed()
         }
-        ordered.mapIndexed { i, ch ->
-            if (ch.chapterNumber >= 0f) ch else ch.copy(chapterNumber = (i + 1).toFloat())
-        }
-    }
 
     private fun parseDate(raw: String): Long {
         val value = raw.trim().takeIf { it.isNotEmpty() } ?: return 0L
@@ -455,5 +491,6 @@ class AzureChronicles :
 
     companion object {
         private const val PAGE_MARKER = "acpage"
+        private val NOVEL_ID_REGEX = Regex("""append\(\s*['"]novel_id['"]\s*,\s*['"](\d+)['"]""")
     }
 }

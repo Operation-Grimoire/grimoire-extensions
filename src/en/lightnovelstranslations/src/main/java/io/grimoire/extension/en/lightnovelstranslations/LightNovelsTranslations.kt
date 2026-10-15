@@ -18,14 +18,14 @@ import io.grimoire.api.util.richDescription
 import io.grimoire.api.util.richHtml
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 
 @SourceInfo(
     name = "Light Novels Translations",
     lang = Language.EN,
     baseUrl = "https://lightnovelstranslations.com",
-    versionCode = 11,
+    versionCode = 12,
     novelUpdatesGroups = ["Light Novels Translations"],
 )
 class LightNovelsTranslations :
@@ -40,23 +40,29 @@ class LightNovelsTranslations :
     override val lang = Language.EN
     override val baseUrl = "https://lightnovelstranslations.com"
 
-    // Single catalogue at /read with no separate "popular" ordering.
-    private fun readListUrl(page: Int) = if (page > 1) "$baseUrl/read/page/$page/" else "$baseUrl/read/"
+    // The catalogue lives at /browse/ (the old /read/ 301s there): 6 cards per
+    // page, `?paged=N`, with a `sortby` order and a title search
+    // (`field-search`, also matching alternate titles). There is no
+    // chapter-update ordering; "Newest additions" is the closest to latest.
+    private fun browseUrl(page: Int, sortBy: String? = null, query: String? = null) =
+        "$baseUrl/browse/".toHttpUrl().newBuilder().apply {
+            sortBy?.let { addQueryParameter("sortby", it) }
+            query?.let { addQueryParameter("field-search", it) }
+            addQueryParameter("paged", page.toString())
+        }.build().toString()
 
-    override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        get(readListUrl(page)).asJsoup().select("div.read_list-story-item").map { it.toListNovel() }
+    private suspend fun browse(url: String): List<Novel> = withContext(Dispatchers.IO) {
+        get(url).asJsoup().select("article.read_list-story-item").mapNotNull { it.toListNovel() }
     }
 
-    override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        get(readListUrl(page)).asJsoup().select("div.read_list-story-item").map { it.toListNovel() }
-    }
+    override suspend fun getPopularNovels(page: Int): List<Novel> = browse(browseUrl(page, sortBy = "most-liked"))
 
+    override suspend fun getLatestUpdates(page: Int): List<Novel> = browse(browseUrl(page, sortBy = "most-recent"))
+
+    // The site-wide WordPress search (`/?s=`) now returns chapter posts rather
+    // than novels, so search the catalogue instead.
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> =
-        withContext(Dispatchers.IO) {
-            val encoded = URLEncoder.encode(query, "UTF-8")
-            val url = if (page > 1) "$baseUrl/page/$page/?s=$encoded" else "$baseUrl/?s=$encoded"
-            get(url).asJsoup().select("article.novels").map { it.toSearchNovel() }
-        }
+        browse(browseUrl(page, query = query.trim()))
 
     override suspend fun getNovelDetails(novel: Novel): Novel = withContext(Dispatchers.IO) {
         val url = resolveUrl(novel.url)
@@ -96,24 +102,13 @@ class LightNovelsTranslations :
 
     internal fun pageFromElement(element: Element, index: Int): NovelPage = element.toPage(index)
 
-    private fun Element.toListNovel(): Novel {
-        val link = selectFirst("div.read_list-story-item--title a")!!
+    private fun Element.toListNovel(): Novel? {
+        val link = selectFirst("div.wrap_item_content h3 a") ?: return null
         return Novel(
             url = link.attr("href"),
             title = link.text().trim(),
             language = lang,
-            thumbnailUrl = selectFirst("div.item_thumb img")?.absUrl("src"),
-        )
-    }
-
-    private fun Element.toSearchNovel(): Novel {
-        val link = selectFirst("div.entry-summary a")!!
-        val img = link.selectFirst("img")
-        return Novel(
-            url = link.attr("href"),
-            title = link.attr("title").ifBlank { img?.attr("alt").orEmpty() }.trim(),
-            language = lang,
-            thumbnailUrl = img?.absUrl("src"),
+            thumbnailUrl = selectFirst("div.item_thumb img")?.imageUrl(),
         )
     }
 

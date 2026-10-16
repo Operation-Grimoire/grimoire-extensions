@@ -17,13 +17,8 @@ Reasons fall into a few buckets:
 
 | Language | Source | URL | Reason not added |
 |----------|--------|-----|------------------|
-| ar | Hizo Manga | https://hizomanga.net | Manga (images), not prose; popular listing also redirect-loops under the app's client |
 | ar | Novel Arab | https://novelarab.com | JS-rendered content — chapter prose is injected client-side, empty in the server HTML |
 | ar | Markaz Riwayat | https://markazriwayat.com | Blocked/paywalled — listing requests time out |
-| ar | kolnovel | https://kolnovel.com | Needs a shared base first — Themesia "LightNovel" theme (not yet supported) |
 | ar | novelsparadise | https://novelsparadise.site | Themesia theme + membership paywall (locked chapters) |
-| ar | rewayat.club | https://rewayat.club | Custom platform — Vue SPA backed by a private JSON API |
 | ar | realmnovel | https://www.realmnovel.com | Custom platform — bespoke app with a Mongo-style API |
 | ar | sunovels | https://sunovels.com | Custom platform — bespoke site, no shared theme |
-| ar | rewayatfans | https://rewayatfans.com | Plain WordPress (no novel theme); novels are raw posts — bespoke scraping |
-| ar | rewayahfans | https://rewayahfans.net | Plain WordPress (no novel theme); bespoke scraping (sister site of rewayatfans) |

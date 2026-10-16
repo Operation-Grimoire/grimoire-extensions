@@ -43,7 +43,7 @@ import java.io.IOException
     name = "Azure Chronicles",
     lang = Language.EN,
     baseUrl = "https://azurechronicles.com",
-    versionCode = 10,
+    versionCode = 11,
     novelUpdatesGroups = ["Azure Chronicles"],
 )
 class AzureChronicles :
@@ -87,6 +87,9 @@ class AzureChronicles :
 
     // Routing: no query/filters -> browse archive (paginated); plain query ->
     // ac_search_series JSON; any filter -> ac_archive_filter_novels (single page).
+    // The archive filter endpoint takes `q` alongside every filter.
+    override val supportsSearchWithFilters: Boolean = true
+
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> =
         withContext(Dispatchers.IO) {
             val q = query.trim()
@@ -110,25 +113,45 @@ class AzureChronicles :
                     searchNonce = null
                     searchSeries(q, page).orEmpty()
                 }
+                // Same for the archive filter's own nonce.
                 else -> {
-                    val b = adminAjax()
-                        .addQueryParameter("action", "ac_archive_filter_novels")
-                        .addQueryParameter("nonce", ensureNonce())
-                        .addQueryParameter("type", "novel")
-                        .addQueryParameter("q", q)
-                        .addQueryParameter(PAGE_MARKER, page.toString())
-                    genres.forEach { b.addQueryParameter("genre[]", it) }
-                    tags.forEach { b.addQueryParameter("tag[]", it) }
-                    sort?.let { b.addQueryParameter("sort", it) }
-                    status?.let { b.addQueryParameter("status", it) }
-                    translator?.let { b.addQueryParameter("translator", it) }
-                    // A rejected/expired nonce answers "-1"; degrade to no results.
-                    val json = runCatching { JSONObject(getBody(b.build().toString())) }.getOrNull()
-                        ?: return@withContext emptyList()
-                    parseCards(Jsoup.parse(json.optJSONObject("data")?.optString("html").orEmpty(), baseUrl))
+                    val params = ArchiveQuery(q, page, genres, tags, sort, status, translator)
+                    archiveFilter(params) ?: run {
+                        nonce = null
+                        archiveFilter(params).orEmpty()
+                    }
                 }
             }
         }
+
+    private class ArchiveQuery(
+        val q: String,
+        val page: Int,
+        val genres: List<String>,
+        val tags: List<String>,
+        val sort: String?,
+        val status: String?,
+        val translator: String?,
+    )
+
+    /** Returns null when the endpoint rejects the nonce ("-1", HTTP 403). */
+    private suspend fun archiveFilter(p: ArchiveQuery): List<Novel>? {
+        val b = adminAjax()
+            .addQueryParameter("action", "ac_archive_filter_novels")
+            .addQueryParameter("nonce", ensureNonce())
+            .addQueryParameter("type", "novel")
+            .addQueryParameter("q", p.q)
+            .addQueryParameter(PAGE_MARKER, p.page.toString())
+        p.genres.forEach { b.addQueryParameter("genre[]", it) }
+        p.tags.forEach { b.addQueryParameter("tag[]", it) }
+        p.sort?.let { b.addQueryParameter("sort", it) }
+        p.status?.let { b.addQueryParameter("status", it) }
+        p.translator?.let { b.addQueryParameter("translator", it) }
+        val raw = getBody(b.build().toString())
+        if (raw.trim() == "-1") return null
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyList()
+        return parseCards(Jsoup.parse(json.optJSONObject("data")?.optString("html").orEmpty(), baseUrl))
+    }
 
     private fun parseCardLinks(doc: Document, selector: String): List<Novel> =
         doc.select(selector).mapNotNull { link ->

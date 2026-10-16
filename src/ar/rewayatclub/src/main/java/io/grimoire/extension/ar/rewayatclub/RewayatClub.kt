@@ -29,7 +29,7 @@ import org.jsoup.Jsoup
  * api.rewayat.club. Novel and chapter URLs mirror the site's own routes
  * (`/novel/{slug}`, `/novel/{slug}/{number}`) so they open in a browser.
  */
-@SourceInfo(name = "Rewayat Club", lang = Language.AR, baseUrl = "https://rewayat.club", versionCode = 1)
+@SourceInfo(name = "Rewayat Club", lang = Language.AR, baseUrl = "https://rewayat.club", versionCode = 2)
 class RewayatClub :
     HttpSource(),
     PopularSource,
@@ -65,6 +65,9 @@ class RewayatClub :
             .mapNotNull { it.optJSONObject("novel")?.toListNovel() }
             .distinctBy { it.url }
     }
+
+    // The library API takes `search` and `type` together.
+    override val supportsSearchWithFilters: Boolean = true
 
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> {
         val type = filters.filterIsInstance<TypeFilter>().firstOrNull()?.state?.takeIf { it > 0 }

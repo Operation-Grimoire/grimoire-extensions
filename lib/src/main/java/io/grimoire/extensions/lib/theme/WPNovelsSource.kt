@@ -55,6 +55,9 @@ abstract class WPNovelsSource :
             .select("div.page-item-detail").map { it.toListNovel() }
     }
 
+    // Madara search (`?s=`) takes every filter alongside the query.
+    override val supportsSearchWithFilters: Boolean = true
+
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> =
         withContext(Dispatchers.IO) {
             val params = StringBuilder()

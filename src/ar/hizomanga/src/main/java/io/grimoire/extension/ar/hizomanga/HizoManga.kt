@@ -11,7 +11,7 @@ import org.jsoup.nodes.Document
 
 // Despite the name, Hizo Manga publishes Arabic text novels. Its Madara
 // archive lives at /series/; novels themselves are under /content/{id}/.
-@SourceInfo(name = "Hizo Manga", lang = Language.AR, baseUrl = "https://hizomanga.net", versionCode = 1)
+@SourceInfo(name = "Hizo Manga", lang = Language.AR, baseUrl = "https://hizomanga.net", versionCode = 2)
 class HizoManga : WPNovelsSource() {
     override val name = "Hizo Manga"
     override val lang = Language.AR

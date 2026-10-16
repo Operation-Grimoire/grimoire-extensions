@@ -53,7 +53,10 @@ abstract class WpComNovelPagesSource :
     private fun pagesApi(): HttpUrl.Builder =
         "https://public-api.wordpress.com/wp/v2/sites/$siteHost/pages".toHttpUrl().newBuilder()
 
-    private suspend fun getJson(url: HttpUrl): String = get(url.toString()).use { it.body?.string().orEmpty() }
+    private suspend fun getJson(url: HttpUrl): String = get(url.toString()).use { response ->
+        check(response.isSuccessful) { "HTTP ${response.code} for $url" }
+        response.body?.string().orEmpty()
+    }
 
     /**
      * Fetch one page by the slug in its site URL; null when it doesn't exist.
@@ -86,7 +89,9 @@ abstract class WpComNovelPagesSource :
             .addQueryParameter("slug", slug)
             .addQueryParameter("_fields", fields)
             .build()
-        return runCatching { JSONArray(getJson(api)).optJSONObject(0) }.getOrNull()
+        // An empty result means no such page; HTTP errors propagate so a rate
+        // limit or outage isn't mistaken for a missing page.
+        return JSONArray(getJson(api)).optJSONObject(0)
     }
 
     private val movedNovels = ConcurrentHashMap<String, String>()
@@ -104,7 +109,7 @@ abstract class WpComNovelPagesSource :
             .addQueryParameter("per_page", "20")
             .addQueryParameter("_fields", "link,title,content")
             .build()
-        val hits = runCatching { JSONArray(getJson(api)) }.getOrNull() ?: return null
+        val hits = JSONArray(getJson(api))
         val viaBreadcrumb = LinkedHashSet<String>()
         for (i in 0 until hits.length()) {
             val hit = hits.getJSONObject(i)
@@ -130,7 +135,12 @@ abstract class WpComNovelPagesSource :
 
     // --- Listings -------------------------------------------------------------
 
-    private class Catalogue(val fetchedAt: Long, val novels: List<Novel>, val pageTitles: Map<String, String>)
+    private class Catalogue(
+        val fetchedAt: Long,
+        val novels: List<Novel>,
+        val pageTitles: Map<String, String>,
+        val titlesComplete: Boolean,
+    )
 
     @Volatile
     private var catalogue: Catalogue? = null
@@ -138,9 +148,15 @@ abstract class WpComNovelPagesSource :
     private suspend fun novelList(): List<Novel> = catalogue().novels
 
     private suspend fun catalogue(): Catalogue {
-        catalogue?.let { if (System.currentTimeMillis() - it.fetchedAt < LIST_TTL_MS) return it }
+        catalogue?.let {
+            // Missing Arabic titles only degrade search, so a partial catalogue is
+            // still served, but retried soon rather than kept for the full TTL.
+            val ttl = if (it.titlesComplete) LIST_TTL_MS else PARTIAL_LIST_TTL_MS
+            if (System.currentTimeMillis() - it.fetchedAt < ttl) return it
+        }
         val list = fetchNovelList()
-        return Catalogue(System.currentTimeMillis(), list, fetchPageTitles(list)).also { catalogue = it }
+        val (titles, complete) = fetchPageTitles(list)
+        return Catalogue(System.currentTimeMillis(), list, titles, complete).also { catalogue = it }
     }
 
     private suspend fun fetchNovelList(): List<Novel> {
@@ -162,21 +178,28 @@ abstract class WpComNovelPagesSource :
 
     /**
      * The list shows English titles while each novel page is titled in Arabic;
-     * fetch the page titles in batches so search can match either.
+     * fetch the page titles in batches so search can match either. Batches stay
+     * small because Arabic slugs percent-encode to ~9 bytes per letter and the
+     * query string grows with every slug. Returns the titles and whether every
+     * batch succeeded.
      */
-    private suspend fun fetchPageTitles(list: List<Novel>): Map<String, String> =
-        list.chunked(100).flatMap { chunk ->
+    private suspend fun fetchPageTitles(list: List<Novel>): Pair<Map<String, String>, Boolean> {
+        var complete = true
+        val titles = list.chunked(TITLE_BATCH).flatMap { chunk ->
             val api = pagesApi().apply {
                 chunk.forEach { novel ->
                     novel.url.toHttpUrl().pathSegments.lastOrNull { it.isNotEmpty() }?.let { addQueryParameter("slug[]", it) }
                 }
             }.addQueryParameter("per_page", "100").addQueryParameter("_fields", "link,title").build()
-            val pages = runCatching { JSONArray(getJson(api)) }.getOrNull() ?: return@flatMap emptyList()
+            val pages = runCatching { JSONArray(getJson(api)) }.getOrNull()
+                ?: run { complete = false; return@flatMap emptyList() }
             (0 until pages.length()).map { i ->
                 val page = pages.getJSONObject(i)
                 page.getString("link").pathKey() to Jsoup.parse(page.getJSONObject("title").getString("rendered")).text()
             }
         }.toMap()
+        return titles to complete
+    }
 
     private fun String.pathKey(): String =
         toHttpUrlOrNull()?.pathSegments?.filter { it.isNotEmpty() }?.joinToString("/")?.lowercase() ?: lowercase()
@@ -197,8 +220,9 @@ abstract class WpComNovelPagesSource :
             .addQueryParameter("page", page.toString())
             .addQueryParameter("_fields", "title")
             .build()
-        val raw = getJson(api)
-        val pages = runCatching { JSONArray(raw) }.getOrNull() ?: return@withContext emptyList()
+        // Past the last page the API answers 400 rest_post_invalid_page_number.
+        val raw = runCatching { getJson(api) }.getOrElse { if (page > 1) return@withContext emptyList() else throw it }
+        val pages = JSONArray(raw)
         (0 until pages.length()).mapNotNull { i ->
             val title = pages.getJSONObject(i).getJSONObject("title").getString("rendered")
             byTitle[Jsoup.parse(title).text().replace(TRAILING_NUMBER, "").titleKey()]
@@ -313,6 +337,8 @@ abstract class WpComNovelPagesSource :
 
     private companion object {
         const val LIST_TTL_MS = 10 * 60 * 1000L
+        const val PARTIAL_LIST_TTL_MS = 60 * 1000L
+        const val TITLE_BATCH = 40
         const val MIN_TITLE_KEY = 6
         const val PLACEHOLDER = "تحديث" // "to be updated" — an unset field
         const val STORY_LABEL = "القصة"

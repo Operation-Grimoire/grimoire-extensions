@@ -19,6 +19,5 @@ Reasons fall into a few buckets:
 |----------|--------|-----|------------------|
 | ar | Novel Arab | https://novelarab.com | JS-rendered content — chapter prose is injected client-side, empty in the server HTML |
 | ar | Markaz Riwayat | https://markazriwayat.com | Blocked/paywalled — listing requests time out |
-| ar | novelsparadise | https://novelsparadise.site | Themesia theme + membership paywall (locked chapters) |
-| ar | realmnovel | https://www.realmnovel.com | Custom platform — bespoke app with a Mongo-style API |
+| ar | realmnovel | https://www.realmnovel.com | Web is a display-only front end: chapters 1–50 per novel; the rest are app-only (private mobile API) — #79 |
 | ar | sunovels | https://sunovels.com | Custom platform — bespoke site, no shared theme |

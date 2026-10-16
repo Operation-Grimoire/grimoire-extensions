@@ -43,7 +43,7 @@ import java.io.IOException
     name = "Azure Chronicles",
     lang = Language.EN,
     baseUrl = "https://azurechronicles.com",
-    versionCode = 10,
+    versionCode = 11,
     novelUpdatesGroups = ["Azure Chronicles"],
 )
 class AzureChronicles :
@@ -87,6 +87,9 @@ class AzureChronicles :
 
     // Routing: no query/filters -> browse archive (paginated); plain query ->
     // ac_search_series JSON; any filter -> ac_archive_filter_novels (single page).
+    // The archive filter endpoint takes `q` alongside every filter.
+    override val supportsSearchWithFilters: Boolean = true
+
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> =
         withContext(Dispatchers.IO) {
             val q = query.trim()

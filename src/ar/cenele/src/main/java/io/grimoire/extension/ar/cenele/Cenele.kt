@@ -22,7 +22,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-@SourceInfo(name = "Cenele", lang = Language.AR, baseUrl = "https://cenele.com", versionCode = 5)
+@SourceInfo(name = "Cenele", lang = Language.AR, baseUrl = "https://cenele.com", versionCode = 6)
 class Cenele : WPNovelsSource() {
     override val name = "Cenele"
     override val lang = Language.AR

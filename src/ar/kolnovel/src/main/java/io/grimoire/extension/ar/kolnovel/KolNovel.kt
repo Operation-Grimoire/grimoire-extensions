@@ -29,7 +29,7 @@ import org.jsoup.nodes.Element
  * - chapter bodies interleave decoy copies of their own paragraphs, hidden
  *   by randomly named classes declared in an inline stylesheet.
  */
-@SourceInfo(name = "Kol Novel", lang = Language.AR, baseUrl = "https://kolnovel.com", versionCode = 1)
+@SourceInfo(name = "Kol Novel", lang = Language.AR, baseUrl = "https://kolnovel.com", versionCode = 2)
 class KolNovel :
     ParsedHttpSource(),
     PopularSource,
@@ -93,14 +93,21 @@ class KolNovel :
         get(novel.url).asJsoup().select(".eplister li > a[href]").map { link ->
             val num = link.selectFirst(".epl-num")?.text()?.trim().orEmpty()
             val title = link.selectFirst(".epl-title")?.text()?.trim().orEmpty()
+            // Titles often repeat the number up front ("996 فانغ يوان…"), and some
+            // chapters carry it only there, with a bare "الفصل" in `.epl-num`.
+            val leading = LEADING_NUMBER.find(title)
             val number = CHAPTER_NUMBER.find(num)?.groupValues?.get(1)?.toFloatOrNull()
                 ?: CHAPTER_NUMBER.find(title)?.groupValues?.get(1)?.toFloatOrNull()
+                ?: leading?.groupValues?.get(1)?.toFloatOrNull()
                 ?: -1f
+            val rest = leading?.takeIf { it.groupValues[1].toFloatOrNull() == number }
+                ?.let { title.substring(it.range.last + 1).trimStart(' ', '-', '–', ':') }
+                ?: title
             Chapter(
                 url = link.absUrl("href"),
                 name = when {
                     title.contains("الفصل") || title.isEmpty() && num.isNotEmpty() -> title.ifEmpty { num }
-                    number >= 0f -> "الفصل ${number.toChapterLabel()}: $title"
+                    number >= 0f -> "الفصل ${number.toChapterLabel()}" + if (rest.isEmpty()) "" else ": $rest"
                     else -> title
                 },
                 chapterNumber = number,
@@ -158,6 +165,7 @@ class KolNovel :
         const val TITLE_TAG = "كول"
         val OBFUSCATED_TITLE = Regex("""^.+?([^\p{L}\p{N}\s])$TITLE_TAG$""")
         val CHAPTER_NUMBER = Regex("""الفصل\s*(\d+(?:\.\d+)?)""")
+        val LEADING_NUMBER = Regex("""^(\d+(?:\.\d+)?)(?=\s|$)""")
         val CSS_RULE = Regex("""([^{}]+)\{([^}]*)\}""")
         val CLASS_SELECTOR = Regex("""\.([A-Za-z_][\w-]*)""")
         val HIDING_DECLARATION = Regex(

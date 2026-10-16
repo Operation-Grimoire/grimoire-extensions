@@ -75,6 +75,8 @@ class NovelsParadise :
 
     // The library page takes the search query and every filter, so search and
     // browse share one endpoint.
+    override val supportsSearchWithFilters: Boolean = true
+
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> = list(page) {
         query.trim().takeIf { it.isNotEmpty() }?.let { addQueryParameter("q", it) }
         filters.filterIsInstance<SelectFilter>().forEach { f ->

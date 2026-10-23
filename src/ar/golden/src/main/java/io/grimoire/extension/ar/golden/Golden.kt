@@ -9,7 +9,6 @@ import io.grimoire.api.model.novel.NovelStatus
 import io.grimoire.api.model.novel.PageContent
 import io.grimoire.api.source.SourceInfo
 import io.grimoire.api.source.feature.LatestSource
-import io.grimoire.api.source.feature.PopularSource
 import io.grimoire.api.source.feature.SearchSource
 import io.grimoire.api.source.http.HttpSource
 import io.grimoire.api.source.web.ChapterListSource
@@ -17,6 +16,8 @@ import io.grimoire.api.source.web.PageListSource
 import io.grimoire.api.util.richDescription
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -26,13 +27,25 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.text.Normalizer
+import java.util.ArrayDeque
 
 /** Golden is currently branded Dilar. Catalog search may be in read-only maintenance. */
-@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 2)
-class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterListSource, PageListSource {
+@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 3)
+open class Golden : HttpSource(), LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "Golden"
     override val lang = Language.AR
     override val baseUrl = "https://golden.rest"
+    private val latestMutex = Mutex()
+    private var latestCache: LatestCache? = null
+
+    private class LatestCache {
+        val createdAt = System.currentTimeMillis()
+        val pages = mutableListOf<List<Novel>>()
+        val pending = ArrayDeque<Novel>()
+        val seen = mutableSetOf<String>()
+        var nextReleasePage = 1
+        var lastReleasePage = Int.MAX_VALUE
+    }
 
     private suspend fun text(url: String): String = get(url).use {
         check(it.isSuccessful) { "Golden: HTTP ${it.code}" }
@@ -44,17 +57,37 @@ class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterL
             ?: error("Golden: page data unavailable"),
     )
 
-    // Both home feeds are finite. They contain manga too; retain only novels.
-    override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        if (page != 1) return@withContext emptyList()
-        val data = props(Jsoup.parse(text("$baseUrl/mangas/featured"), baseUrl)).getJSONObject("hotMangasAction")
-        data.getJSONArray("hotMangas").objects().filter { it.optBoolean("is_novel") }.map(::novel)
-    }
-
+    // Public release pages contain manga, repeated chapters and hidden entries.
+    // Pack distinct novels in release order; a short/empty filtered backend page
+    // is not the end of the feed. Its UI uses 50 raw releases per backend page.
     override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        if (page != 1) return@withContext emptyList()
-        val data = props(Jsoup.parse(text(baseUrl), baseUrl)).getJSONObject("latestReleasesAction")
-        novelsInReleases(data.getJSONObject("latestReleases").getJSONArray("releases"))
+        require(page > 0)
+        latestMutex.withLock {
+            val cache = latestCache?.takeUnless { page == 1 && System.currentTimeMillis() - it.createdAt > 300_000 }
+                ?: LatestCache().also { latestCache = it }
+            while (cache.pages.size < page) {
+                if (cache.pages.lastOrNull()?.isEmpty() == true) return@withLock emptyList()
+                var fetched = 0
+                while (cache.pending.size < 12 && cache.nextReleasePage <= cache.lastReleasePage && fetched < 20) {
+                    val data = JSONObject(text("$baseUrl/api/releases?page=${cache.nextReleasePage}"))
+                    val total = data.getInt("totalReleases").also { check(it >= 0) }
+                    val novels = novelsInReleases(data.getJSONArray("releases"))
+                    cache.lastReleasePage = (total + 49) / 50
+                    cache.nextReleasePage++
+                    fetched++
+                    novels.forEach { novel -> if (cache.seen.add(id(novel.url))) cache.pending.addLast(novel) }
+                }
+                // Bound a sparse archive scan without falsely declaring EOF.
+                // A retry resumes at the next unfetched release page.
+                check(cache.pending.isNotEmpty() || cache.nextReleasePage > cache.lastReleasePage) {
+                    "Golden: no new novels in 20 release pages; retry to continue"
+                }
+                val result = cache.pending.take(12)
+                repeat(result.size) { cache.pending.removeFirst() }
+                cache.pages.add(result)
+            }
+            cache.pages[page - 1]
+        }
     }
 
     internal fun novelsInReleases(entries: JSONArray): List<Novel> = entries.objects()

@@ -9,7 +9,6 @@ import io.grimoire.api.model.novel.NovelStatus
 import io.grimoire.api.model.novel.PageContent
 import io.grimoire.api.source.SourceInfo
 import io.grimoire.api.source.feature.LatestSource
-import io.grimoire.api.source.feature.PopularSource
 import io.grimoire.api.source.feature.SearchSource
 import io.grimoire.api.source.http.HttpSource
 import io.grimoire.api.source.web.PageListSource
@@ -23,10 +22,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "Seanovel", lang = Language.AR, baseUrl = "https://seanovel.org", versionCode = 2)
-class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
+@SourceInfo(name = "Seanovel", lang = Language.AR, baseUrl = "https://seanovel.org", versionCode = 3)
+open class Seanovel : HttpSource(), LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "Seanovel"
     override val lang = Language.AR
     override val baseUrl = "https://seanovel.org"
@@ -63,20 +66,20 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
         )
     }
 
-    // Use the site's finite featured selection; the index has no popularity field.
-    override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        if (page != 1) return@withContext emptyList()
-        val featured = Jsoup.parse(text(baseUrl), baseUrl).select("a.hero__title-link[href]")
-            .map { it.absUrl("href").toHttpUrl().pathSegments.last() }.toSet()
-        val bySlug = index().associateBy { it.getString("slug") }
-        featured.mapNotNull { bySlug[it] }.map(::novel).also {
-            check(it.isNotEmpty()) { "Seanovel: featured novels unavailable" }
-        }
+    override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
+        // Match the site's Date-based updated sort, including timezone offsets.
+        slice(index().sortedByDescending { updatedAt(it.string("last_updated")) }, page)
+            .map(::novel)
     }
 
-    override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        slice(index().sortedByDescending { it.string("last_updated") }, page).map(::novel)
-    }
+    // JavaScript Date treats zoned instants directly, naive date-times in the
+    // device's timezone, and ISO date-only values at UTC midnight. All three
+    // formats occur in the site's search index.
+    internal fun updatedAt(value: String, zone: ZoneId = ZoneId.systemDefault()): Long =
+        runCatching { Instant.parse(value).toEpochMilli() }
+            .recoverCatching { LocalDateTime.parse(value).atZone(zone).toInstant().toEpochMilli() }
+            .recoverCatching { LocalDate.parse(value).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() }
+            .getOrDefault(0)
 
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> = withContext(Dispatchers.IO) {
         val q = query.trim()
@@ -87,7 +90,7 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
 
     private fun <T> slice(items: List<T>, page: Int): List<T> {
         require(page > 0)
-        return items.drop((page - 1) * 30).take(30)
+        return items.drop((page - 1) * 24).take(24)
     }
 
     override suspend fun getNovelDetails(novel: Novel): Novel = withContext(Dispatchers.IO) {

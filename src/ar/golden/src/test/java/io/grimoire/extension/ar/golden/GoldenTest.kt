@@ -1,16 +1,86 @@
 package io.grimoire.extension.ar.golden
 
 import io.grimoire.api.model.novel.PageContent
+import io.grimoire.api.source.feature.PopularSource
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 class GoldenTest {
     private val source = Golden()
+
+    @Test
+    fun `a mixed-media featured selection is not advertised as novel popularity`() {
+        assertFalse(PopularSource::class.java.isAssignableFrom(Golden::class.java))
+    }
+
+    @Test
+    fun `latest continues through manga-only and duplicate-only release pages`() = runBlocking {
+        val requested = mutableListOf<Int>()
+        val paged = releaseSource(mapOf(
+            1 to listOf(1 to true, 2 to false),
+            2 to listOf(2 to false),
+            3 to listOf(1 to true),
+            4 to listOf(3 to true),
+        ), requested)
+        assertEquals(listOf("Book 1", "Book 3"), paged.getLatestUpdates(1).map { it.title })
+        assertTrue(paged.getLatestUpdates(2).isEmpty())
+        assertTrue(paged.getLatestUpdates(3).isEmpty())
+        assertEquals(listOf(1, 2, 3, 4), requested)
+    }
+
+    @Test
+    fun `latest packs distinct novels into stable pages and reuses fetched releases`() = runBlocking {
+        val requested = mutableListOf<Int>()
+        val paged = releaseSource(mapOf(
+            1 to (1..20).map { it to true },
+            2 to (15..35).map { it to true },
+        ), requested)
+        val first = paged.getLatestUpdates(1)
+        val second = paged.getLatestUpdates(2)
+        assertEquals((1..12).map { "Book $it" }, first.map { it.title })
+        assertEquals((13..24).map { "Book $it" }, second.map { it.title })
+        assertEquals(first, paged.getLatestUpdates(1))
+        assertEquals(listOf(1, 2), requested)
+    }
+
+    @Test
+    fun `a sparse release scan is bounded and retry continues without false EOF`() {
+        val requested = mutableListOf<Int>()
+        val pages = (1..20).associateWith { emptyList<Pair<Int, Boolean>>() }.toMutableMap()
+        pages[21] = listOf(77 to true)
+        val paged = releaseSource(pages, requested)
+        assertThrows(IllegalStateException::class.java) { runBlocking { paged.getLatestUpdates(1) } }
+        assertEquals(20, requested.size)
+        assertEquals(listOf("Book 77"), runBlocking { paged.getLatestUpdates(1) }.map { it.title })
+        assertEquals((1..21).toList(), requested)
+    }
+
+    private fun releaseSource(pages: Map<Int, List<Pair<Int, Boolean>>>, requested: MutableList<Int>): Golden = object : Golden() {
+        override val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val url = chain.request().url
+            assertEquals("/api/releases", url.encodedPath)
+            val page = url.queryParameter("page")!!.toInt()
+            requested += page
+            val entries = JSONArray()
+            pages.getValue(page).forEach { (id, isNovel) ->
+                entries.put(JSONObject().put("manga", JSONObject().put("id", id).put("title", "Book $id").put("is_novel", isNovel)))
+            }
+            val data = JSONObject().put("totalReleases", pages.size * 50).put("releases", entries)
+            Response.Builder().request(chain.request()).code(200).message("OK").protocol(Protocol.HTTP_1_1)
+                .body(data.toString().toResponseBody()).build()
+        }.build()
+    }
 
     @Test
     fun `Android JSON nulls do not become descriptions or chapter names`() {

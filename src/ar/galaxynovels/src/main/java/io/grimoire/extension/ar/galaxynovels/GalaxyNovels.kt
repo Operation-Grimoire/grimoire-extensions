@@ -16,6 +16,8 @@ import io.grimoire.api.source.web.PageListSource
 import io.grimoire.api.source.web.PaginatedSource
 import io.grimoire.api.util.richDescription
 import io.grimoire.api.util.richHtml
+import io.grimoire.api.network.CloudflareException
+import io.grimoire.api.network.NetworkContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -27,19 +29,41 @@ import java.text.Normalizer
 import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 2)
+@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 3)
 open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "GalaxyNovels"
     override val lang = Language.AR
     override val baseUrl = "https://galaxynovels.com"
     private val pageCounts = ConcurrentHashMap<String, Int>()
     @Volatile private var cachedSearch: Pair<Long, List<JSONObject>>? = null
+    private val browser = GalaxyWebView()
+    @Volatile private var needsBrowser = false
 
-    // HttpSource's shared client handles Cloudflare through WebViewCookieJar,
-    // matching User-Agent and CloudflareInterceptor before this status check.
-    private suspend fun text(url: String): String = get(url).use {
-        check(it.isSuccessful) { "GalaxyNovels: HTTP ${it.code}; try opening the site in the app's WebView" }
-        it.body?.string() ?: error("GalaxyNovels: empty response")
+    // Hand this site's explicit challenges directly to its Chromium reader.
+    // Waiting for a clearance cookie is insufficient when the rendered page
+    // succeeds without issuing one, and would stall the first browse request.
+    override val client = super.client.newBuilder().addNetworkInterceptor { chain ->
+        val response = chain.proceed(chain.request())
+        if (response.header("cf-mitigated")?.equals("challenge", ignoreCase = true) == true) {
+            response.close()
+            throw CloudflareException(chain.request().url.toString())
+        }
+        response
+    }.build()
+
+    // Retain the shared cookie jar, User-Agent and normal HTTP transport.
+    private suspend fun text(url: String, allowNotFound: Boolean = false): String {
+        if (needsBrowser) return browser.text(url, allowNotFound)
+        return try {
+            get(url).use {
+                if (allowNotFound && it.code == 404) return ""
+                check(it.isSuccessful) { "GalaxyNovels: HTTP ${it.code}; try opening the site in the app's WebView" }
+                it.body?.string() ?: error("GalaxyNovels: empty response")
+            }
+        } catch (error: CloudflareException) {
+            if (NetworkContext.context == null) throw error
+            browser.text(url, allowNotFound).also { needsBrowser = true }
+        }
     }
 
     private suspend fun document(url: String): Document = Jsoup.parse(text(url), url)
@@ -47,12 +71,8 @@ open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSourc
     override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
         require(page > 0)
         val path = if (page == 1) "/novels/" else "/novels/page/$page/"
-        get("$baseUrl$path?sort=popular&period=month").use { response ->
-            if (response.code == 404 && page > 1) return@withContext emptyList()
-            check(response.isSuccessful) { "GalaxyNovels: HTTP ${response.code}" }
-            Jsoup.parse(response.body?.string().orEmpty(), baseUrl).select("article.wor-novel-card")
-                .mapNotNull(::card).distinctBy { it.url }
-        }
+        Jsoup.parse(text("$baseUrl$path?sort=popular&period=month", allowNotFound = page > 1), baseUrl)
+            .select("article.wor-novel-card").mapNotNull(::card).distinctBy { it.url }
     }
 
     // The homepage's latest-chapter feed is a finite selection, not /recent/
@@ -75,7 +95,7 @@ open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSourc
         cachedSearch?.takeIf { System.currentTimeMillis() - it.first < 300_000 }?.let { return it.second }
         val doc = document(baseUrl)
         val configText = doc.select("script").firstNotNullOfOrNull { script ->
-            Regex("var worReaderSearchConfig = (\\{[^\\n]+});").find(script.data())?.groupValues?.get(1)
+            Regex("var worReaderSearchConfig = (\\{[^\\n]+\\});").find(script.data())?.groupValues?.get(1)
         } ?: error("GalaxyNovels: search configuration unavailable")
         val manifestUrl = searchResourceUrl(JSONObject(configText).getString("manifestUrl"))
         val indexUrl = searchResourceUrl(JSONObject(text(manifestUrl)).getString("index"))

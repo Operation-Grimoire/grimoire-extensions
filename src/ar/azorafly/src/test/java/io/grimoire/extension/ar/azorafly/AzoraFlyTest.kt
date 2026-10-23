@@ -1,6 +1,11 @@
 package io.grimoire.extension.ar.azorafly
 
 import io.grimoire.api.model.novel.NovelStatus
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -11,6 +16,29 @@ import org.junit.jupiter.api.Test
 
 class AzoraFlyTest {
     private val source = AzoraFly()
+
+    @Test
+    fun `popular uses the novel homepage ranking and ends after its finite feed`() = runBlocking {
+        val requested = mutableListOf<String>()
+        val ranked = object : AzoraFly() {
+            override val client = OkHttpClient.Builder().addInterceptor { chain ->
+                requested += chain.request().url.toString()
+                Response.Builder().request(chain.request()).code(200).message("OK").protocol(Protocol.HTTP_1_1)
+                    .body("""
+                        <section><h2>Latest</h2><a href="/series/latest"><img alt="Latest" src="/latest.jpg"></a></section>
+                        <section><h2>الأكثر شعبية</h2>
+                          <a href="/series/ranked"><img alt="Ranked novel" src="/cover.jpg">1 Ranked novel Genres</a>
+                        </section>
+                    """.toResponseBody()).build()
+            }.build()
+        }
+        val novel = ranked.getPopularNovels(1).single()
+        assertEquals("Ranked novel", novel.title)
+        assertEquals("https://azorafly.com/series/ranked", novel.url)
+        assertEquals("https://azorafly.com/cover.jpg", novel.thumbnailUrl)
+        assertTrue(ranked.getPopularNovels(2).isEmpty())
+        assertEquals(listOf("https://azorafly.com/novels"), requested)
+    }
 
     @Test
     fun `cold details use current page status rather than catalog cache`() {

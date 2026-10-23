@@ -10,6 +10,7 @@ import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.Jsoup
+import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -17,6 +18,25 @@ import org.junit.jupiter.api.Test
 
 class GalaxyNovelsTest {
     private val source = GalaxyNovels()
+
+    @Test
+    fun `WebView result preserves HTML and rejects redirected origins`() {
+        val browser = GalaxyWebView()
+        val url = "https://galaxynovels.com/novel/book/"
+        val html = """<html><article class="wor-reading-page">Arabic prose</article></html>"""
+        val result = JSONObject.quote(JSONObject().put("url", url).put("body", html).toString())
+        assertEquals(html, browser.decode(result, url))
+        val redirected = JSONObject.quote(JSONObject().put("url", "https://other.invalid/").put("body", html).toString())
+        assertThrows(IllegalStateException::class.java) { browser.decode(redirected, url) }
+    }
+
+    @Test
+    fun `WebView waits through challenge HTML and accepts the public JSON index`() {
+        val browser = GalaxyWebView()
+        assertTrue(!browser.isContent("<html><title>Just a moment...</title><body>Checking your browser</body></html>"))
+        assertTrue(browser.isContent("""{"items":[{"t":"Book"}]}"""))
+        assertTrue(browser.isContent("""<html><main class="wor-novel-card">Book</main></html>"""))
+    }
 
     @Test
     fun `source retains host WebView cookies User-Agent and Cloudflare handling`() {

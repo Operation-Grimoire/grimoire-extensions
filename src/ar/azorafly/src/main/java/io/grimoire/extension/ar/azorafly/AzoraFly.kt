@@ -26,8 +26,8 @@ import org.jsoup.nodes.Document
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "AzoraFly", lang = Language.AR, baseUrl = "https://azorafly.com", versionCode = 2)
-class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterListSource, PageListSource {
+@SourceInfo(name = "AzoraFly", lang = Language.AR, baseUrl = "https://azorafly.com", versionCode = 3)
+open class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "AzoraFly"
     override val lang = Language.AR
     override val baseUrl = "https://azorafly.com"
@@ -39,9 +39,25 @@ class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, Chapte
         it.body?.string() ?: error("AzoraFly: empty response")
     }
 
-    override suspend fun getPopularNovels(page: Int): List<Novel> = library("", page, "trending")
-    override suspend fun getLatestUpdates(page: Int): List<Novel> = library("", page, "latest")
-    override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> = library(query, page, "latest")
+    // The API's tag sorts the mixed-media `posts` array but leaves `novelPosts`
+    // in latest order. Use the novel homepage's actual popularity ranking.
+    override suspend fun getPopularNovels(page: Int): List<Novel> = withContext(Dispatchers.IO) {
+        require(page > 0)
+        if (page != 1) return@withContext emptyList()
+        val doc = Jsoup.parse(text("$baseUrl/novels"), baseUrl)
+        val section = doc.select("section").firstOrNull { section ->
+            section.select("h2").any { it.text() in setOf("الأكثر شعبية", "Most Popular") }
+        } ?: error("AzoraFly: popular novel ranking unavailable")
+        section.select("a[href^=/series/]").mapNotNull { link ->
+            val image = link.selectFirst("img[alt]") ?: return@mapNotNull null
+            image.attr("alt").trim().takeIf { it.isNotBlank() }?.let { title ->
+                Novel(url = link.absUrl("href"), title = title, language = lang, thumbnailUrl = image.absUrl("src"))
+            }
+        }.distinctBy { it.url }.also { check(it.isNotEmpty()) { "AzoraFly: empty popular novel ranking" } }
+    }
+
+    override suspend fun getLatestUpdates(page: Int): List<Novel> = library("", page, "latestUpdate")
+    override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> = library(query, page, "latestUpdate")
 
     private suspend fun library(query: String, page: Int, tag: String): List<Novel> = withContext(Dispatchers.IO) {
         require(page > 0)

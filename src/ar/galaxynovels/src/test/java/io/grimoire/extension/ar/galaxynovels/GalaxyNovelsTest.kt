@@ -1,13 +1,46 @@
 package io.grimoire.extension.ar.galaxynovels
 
 import io.grimoire.api.model.novel.PageContent
+import io.grimoire.api.network.CloudflareInterceptor
+import io.grimoire.api.network.UserAgentInterceptor
+import io.grimoire.api.network.WebViewCookieJar
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.Jsoup
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 class GalaxyNovelsTest {
     private val source = GalaxyNovels()
+
+    @Test
+    fun `source retains host WebView cookies User-Agent and Cloudflare handling`() {
+        assertTrue(source.client.cookieJar is WebViewCookieJar)
+        assertTrue(source.client.interceptors.any { it is UserAgentInterceptor })
+        assertTrue(source.client.interceptors.any { it is CloudflareInterceptor })
+    }
+
+    @Test
+    fun `external search manifest is rejected before any external request`() {
+        val requested = mutableListOf<String>()
+        val guarded = object : GalaxyNovels() {
+            override val client = OkHttpClient.Builder().addInterceptor { chain ->
+                requested += chain.request().url.host
+                Response.Builder().request(chain.request()).code(200).message("OK").protocol(Protocol.HTTP_1_1)
+                    .body("""<script>var worReaderSearchConfig = {"manifestUrl":"https://other.invalid/manifest.json"};</script>""".toResponseBody())
+                    .build()
+            }.build()
+        }
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { guarded.searchNovels("query", 1, emptyList()) }
+        }
+        assertEquals(listOf("galaxynovels.com"), requested)
+    }
 
     @Test
     fun `chapter pagination preserves full title slug and finds last page`() {

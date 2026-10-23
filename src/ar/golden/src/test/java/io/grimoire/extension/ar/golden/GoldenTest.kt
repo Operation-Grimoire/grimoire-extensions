@@ -6,10 +6,23 @@ import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 class GoldenTest {
     private val source = Golden()
+
+    @Test
+    fun `Android JSON nulls do not become descriptions or chapter names`() {
+        val data = object : JSONObject("""{"id":1,"title":"Book","is_novel":true,"summary":null}""") {
+            override fun optString(key: String?): String = if (isNull(key)) "null" else super.optString(key)
+        }
+        assertNull(source.novel(data).description)
+        val chapter = object : JSONObject("""{"chapter":1,"title":null,"teams":[]}""") {
+            override fun optString(key: String?): String = if (isNull(key)) "null" else super.optString(key)
+        }
+        assertEquals("الفصل 1", source.parseChapters(JSONArray().put(chapter), "https://golden.rest/mangas/1/book").single().name)
+    }
 
     @Test
     fun `homepage feeds exclude manga and deduplicate novel releases`() {

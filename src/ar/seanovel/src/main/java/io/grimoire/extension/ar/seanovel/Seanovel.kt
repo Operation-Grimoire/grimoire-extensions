@@ -25,7 +25,7 @@ import org.jsoup.Jsoup
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "Seanovel", lang = Language.AR, baseUrl = "https://seanovel.org", versionCode = 1)
+@SourceInfo(name = "Seanovel", lang = Language.AR, baseUrl = "https://seanovel.org", versionCode = 2)
 class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "Seanovel"
     override val lang = Language.AR
@@ -46,16 +46,16 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
         return JSONArray(text("$baseUrl/api/search-index")).objects().also { cachedIndex = System.currentTimeMillis() to it }
     }
 
-    private fun novel(record: JSONObject): Novel {
+    internal fun novel(record: JSONObject): Novel {
         val slug = record.getString("slug")
         return Novel(
-            url = "$baseUrl/novels/$slug", title = record.optString("title_ar").ifBlank { record.getString("title_original") },
+            url = "$baseUrl/novels/$slug", title = record.string("title_ar").ifBlank { record.getString("title_original") },
             language = lang,
             thumbnailUrl = "$baseUrl/api/novel/$slug/cover".toHttpUrl().newBuilder()
-                .addQueryParameter("type", "webp").addQueryParameter("v", record.optString("cover_version")).build().toString(),
-            author = record.optString("author").takeIf { it.isNotBlank() },
+                .addQueryParameter("type", "webp").addQueryParameter("v", record.string("cover_version")).build().toString(),
+            author = record.string("author").takeIf { it.isNotBlank() },
             genres = record.optJSONArray("genres")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
-            status = when (record.optString("status")) {
+            status = when (record.string("status")) {
                 "completed" -> NovelStatus.COMPLETED
                 "ongoing" -> NovelStatus.ONGOING
                 else -> NovelStatus.UNKNOWN
@@ -75,13 +75,13 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
     }
 
     override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
-        slice(index().sortedByDescending { it.optString("last_updated") }, page).map(::novel)
+        slice(index().sortedByDescending { it.string("last_updated") }, page).map(::novel)
     }
 
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> = withContext(Dispatchers.IO) {
         val q = query.trim()
         slice(index().filter { record ->
-            listOf("title_ar", "title_original", "author").any { record.optString(it).contains(q, ignoreCase = true) }
+            listOf("title_ar", "title_original", "author").any { record.string(it).contains(q, ignoreCase = true) }
         }, page).map(::novel)
     }
 
@@ -97,9 +97,9 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
         val book = doc.select("script[type=application/ld+json]").flatMap { script ->
             val data = JSONObject(script.data())
             data.optJSONArray("@graph")?.objects() ?: listOf(data)
-        }.firstOrNull { it.optString("@type") == "Book" }
+        }.firstOrNull { it.string("@type") == "Book" }
         novel(record).copy(
-            description = book?.optString("description")?.takeIf { it.isNotBlank() }
+            description = book?.string("description")?.takeIf { it.isNotBlank() }
                 ?: doc.selectFirst("meta[property=og:description]")?.attr("content"),
             initialized = true,
         )
@@ -129,10 +129,10 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
         val id = ch.get("id").toString()
         Chapter(
             url = "${url.trimEnd('/')}/chapters/$id",
-            name = ch.optString("title").ifBlank { "الفصل $id" },
+            name = ch.string("title").ifBlank { "الفصل $id" },
             chapterNumber = Regex("(?:الفصل\\s*|chapter\\s*)(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
-                .find(ch.optString("title"))?.groupValues?.get(1)?.toFloatOrNull() ?: id.toFloatOrNull() ?: -1f,
-            uploadDate = runCatching { Instant.parse(ch.optString("date")).toEpochMilli() }.getOrDefault(0),
+                .find(ch.string("title"))?.groupValues?.get(1)?.toFloatOrNull() ?: id.toFloatOrNull() ?: -1f,
+            uploadDate = runCatching { Instant.parse(ch.string("date")).toEpochMilli() }.getOrDefault(0),
         )
     }
 
@@ -144,5 +144,8 @@ class Seanovel : HttpSource(), PopularSource, LatestSource, SearchSource, Pagina
     }
 
     private fun slug(url: String): String = url.toHttpUrl().pathSegments.filter(String::isNotEmpty).last()
+    // Android org.json renders JSON null as the literal "null" in optString.
+    private fun JSONObject.string(key: String): String = if (isNull(key)) "" else optString(key)
+
     private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 }

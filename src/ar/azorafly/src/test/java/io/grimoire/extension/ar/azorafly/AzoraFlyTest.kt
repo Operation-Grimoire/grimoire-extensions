@@ -1,5 +1,6 @@
 package io.grimoire.extension.ar.azorafly
 
+import io.grimoire.api.model.novel.NovelStatus
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -10,6 +11,26 @@ import org.junit.jupiter.api.Test
 
 class AzoraFlyTest {
     private val source = AzoraFly()
+
+    @Test
+    fun `cold details use current page status rather than catalog cache`() {
+        val doc = Jsoup.parse("""<section itemprop="itemReviewed"><span>COMPLETED</span></section>""")
+        assertEquals(NovelStatus.COMPLETED, source.status(doc))
+        assertEquals(NovelStatus.COMPLETED, source.status(doc, JSONObject().put("seriesStatus", "ONGOING")))
+    }
+
+    @Test
+    fun `Android JSON nulls preserve cover and chapter title fallbacks`() {
+        val record = object : JSONObject("""{"id":1,"slug":"book","postTitle":"Book","isNovel":true,"seriesType":"NOVEL","featuredImageCL":null,"featuredImage":"https://azorafly.com/cover.png"}""") {
+            override fun optString(key: String?): String = if (isNull(key)) "null" else super.optString(key)
+        }
+        val novel = source.parseLibrary(JSONObject().put("novelPosts", JSONArray().put(record))).single()
+        assertEquals("https://azorafly.com/cover.png", novel.thumbnailUrl)
+        val row = object : JSONObject("""{"slug":"chapter-1","number":1,"title":null}""") {
+            override fun optString(key: String?): String = if (isNull(key)) "null" else super.optString(key)
+        }
+        assertEquals("الفصل 1", source.parseChapters(JSONArray().put(row), novel.url).single().name)
+    }
 
     @Test
     fun `library reads novelPosts and rejects mixed media`() {

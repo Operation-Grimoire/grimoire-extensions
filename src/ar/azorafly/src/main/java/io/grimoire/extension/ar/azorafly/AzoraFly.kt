@@ -26,7 +26,7 @@ import org.jsoup.nodes.Document
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "AzoraFly", lang = Language.AR, baseUrl = "https://azorafly.com", versionCode = 1)
+@SourceInfo(name = "AzoraFly", lang = Language.AR, baseUrl = "https://azorafly.com", versionCode = 2)
 class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "AzoraFly"
     override val lang = Language.AR
@@ -54,15 +54,15 @@ class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, Chapte
     }
 
     internal fun parseLibrary(data: JSONObject): List<Novel> = data.getJSONArray("novelPosts").objects()
-        .filter { it.optBoolean("isNovel") && it.optString("seriesType") == "NOVEL" }
+        .filter { it.optBoolean("isNovel") && it.string("seriesType") == "NOVEL" }
         .map { record ->
             val url = "$baseUrl/series/${record.getString("slug")}"
             records[url] = record
             Novel(
                 url = url, title = record.getString("postTitle"), language = lang,
-                thumbnailUrl = record.optString("featuredImageCL").ifBlank { record.optString("featuredImage") }.takeIf { it.isNotBlank() },
+                thumbnailUrl = record.string("featuredImageCL").ifBlank { record.string("featuredImage") }.takeIf { it.isNotBlank() },
                 genres = record.optJSONArray("genres")?.objects()?.map { it.getString("name") }.orEmpty(),
-                status = when (record.optString("seriesStatus")) {
+                status = when (record.string("seriesStatus")) {
                     "ONGOING" -> NovelStatus.ONGOING
                     "COMPLETED" -> NovelStatus.COMPLETED
                     else -> NovelStatus.UNKNOWN
@@ -83,15 +83,23 @@ class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, Chapte
             thumbnailUrl = doc.selectFirst("img[itemprop=image]")?.absUrl("src"),
             description = doc.selectFirst("[itemprop=description]")?.richDescription(),
             genres = doc.select("[itemprop=genre]").map { it.text() }.distinct(),
-            status = when (record?.optString("seriesStatus")) {
-                "ONGOING" -> NovelStatus.ONGOING
-                "COMPLETED" -> NovelStatus.COMPLETED
-                else -> NovelStatus.UNKNOWN
-            },
+            status = status(doc, record),
             rating = rating(doc),
             ratingCount = doc.selectFirst("meta[itemprop=ratingCount]")?.attr("content")?.toIntOrNull(),
             initialized = true,
         )
+    }
+
+    internal fun status(doc: Document, record: JSONObject? = null): NovelStatus {
+        val pageStatus = doc.select("section[itemprop=itemReviewed] span").map { it.text().trim() }
+            .firstOrNull { it in setOf("ONGOING", "COMPLETED", "HIATUS", "CANCELLED") }
+        return when (pageStatus ?: record?.string("seriesStatus")) {
+            "ONGOING" -> NovelStatus.ONGOING
+            "COMPLETED" -> NovelStatus.COMPLETED
+            "HIATUS" -> NovelStatus.HIATUS
+            "CANCELLED" -> NovelStatus.CANCELLED
+            else -> NovelStatus.UNKNOWN
+        }
     }
 
     internal fun rating(doc: Document): Float? {
@@ -122,9 +130,9 @@ class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, Chapte
         val number = ch.optDouble("number", -1.0).toFloat()
         Chapter(
             url = "${url.trimEnd('/')}/${ch.getString("slug")}",
-            name = ch.optString("title").ifBlank { "الفصل ${ch.get("number")}" },
+            name = ch.string("title").ifBlank { "الفصل ${ch.get("number")}" },
             chapterNumber = number,
-            uploadDate = runCatching { Instant.parse(ch.optString("createdAt")).toEpochMilli() }.getOrDefault(0),
+            uploadDate = runCatching { Instant.parse(ch.string("createdAt")).toEpochMilli() }.getOrDefault(0),
             locked = ch.optBoolean("isLocked") || !ch.optBoolean("isAccessible", true)
                 || ch.optBoolean("isPermanentlyLocked") || ch.optBoolean("isShortLinkLocked"),
         )
@@ -137,6 +145,9 @@ class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, Chapte
         check(paragraphs.isNotEmpty()) { "AzoraFly: chapter unavailable or locked; open it on the website" }
         paragraphs.mapIndexed { i, el -> NovelPage(i, PageContent.Text(el.text(), el.richHtml())) }
     }
+
+    // Android org.json renders JSON null as the literal "null" in optString.
+    private fun JSONObject.string(key: String): String = if (isNull(key)) "" else optString(key)
 
     private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 }

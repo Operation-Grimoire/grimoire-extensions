@@ -28,7 +28,7 @@ import org.jsoup.nodes.Document
 import java.text.Normalizer
 
 /** Golden is currently branded Dilar. Catalog search may be in read-only maintenance. */
-@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 1)
+@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 2)
 class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "Golden"
     override val lang = Language.AR
@@ -61,16 +61,16 @@ class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterL
         .mapNotNull { it.optJSONObject("manga") }.filter { it.optBoolean("is_novel") }
         .map(::novel).distinctBy { it.url }
 
-    private fun novel(data: JSONObject): Novel {
+    internal fun novel(data: JSONObject): Novel {
         check(data.getBoolean("is_novel")) { "Golden: this title is not a prose novel" }
         val id = data.getLong("id")
         return Novel(
             url = "$baseUrl/mangas/$id/${slug(data.getString("title"))}",
-            title = data.optString("arabic_title").takeUnless { it.isBlank() || it == "null" } ?: data.getString("title"),
+            title = data.string("arabic_title").takeUnless { it.isBlank() || it == "null" } ?: data.getString("title"),
             language = lang,
-            thumbnailUrl = data.optString("cover").takeIf { it.isNotBlank() && it != "null" }
+            thumbnailUrl = data.string("cover").takeIf { it.isNotBlank() && it != "null" }
                 ?.let { "$baseUrl/uploads/manga/cover/$id/large_$it" },
-            description = data.optString("summary").takeIf { it.isNotBlank() }
+            description = data.string("summary").takeIf { it.isNotBlank() }
                 ?.let { Jsoup.parseBodyFragment(it).body().richDescription() },
             author = data.optJSONArray("authors")?.objects()?.map { it.getString("name") }?.distinct()?.joinToString(", ")?.takeIf { it.isNotBlank() },
             genres = data.optJSONArray("categories")?.objects()?.map { it.getString("name") }?.distinct().orEmpty(),
@@ -79,7 +79,7 @@ class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterL
                 1 -> NovelStatus.ONGOING
                 else -> NovelStatus.UNKNOWN
             },
-            rating = data.optString("rating").toFloatOrNull(),
+            rating = data.string("rating").toFloatOrNull(),
         )
     }
 
@@ -123,7 +123,7 @@ class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterL
             if (teamPath.isNotBlank()) addPathSegment(teamPath)
         }.build().toString()
         Chapter(
-            url = url, name = ch.optString("title").ifBlank { "الفصل $number" },
+            url = url, name = ch.string("title").ifBlank { "الفصل $number" },
             chapterNumber = ch.optDouble("chapter", -1.0).toFloat(),
             translator = teams.joinToString(" & "), uploadDate = ch.optLong("time_stamp") * 1000,
             locked = ch.optInt("link_control") != 0 || ch.optBoolean("has_rev_link"),
@@ -151,5 +151,8 @@ class Golden : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterL
     private fun slug(title: String): String = Normalizer.normalize(title, Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("\\s+"), "-").replace('&'.toString(), "-and-")
         .replace(Regex("[^a-z0-9_-]"), "").replace(Regex("-+"), "-").trim('-').ifBlank { "data" }
+    // Android org.json renders JSON null as the literal "null" in optString.
+    private fun JSONObject.string(key: String): String = if (isNull(key)) "" else optString(key)
+
     private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 }

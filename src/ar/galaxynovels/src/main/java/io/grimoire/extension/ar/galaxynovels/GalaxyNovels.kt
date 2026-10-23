@@ -27,14 +27,16 @@ import java.text.Normalizer
 import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 1)
-class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
+@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 2)
+open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "GalaxyNovels"
     override val lang = Language.AR
     override val baseUrl = "https://galaxynovels.com"
     private val pageCounts = ConcurrentHashMap<String, Int>()
     @Volatile private var cachedSearch: Pair<Long, List<JSONObject>>? = null
 
+    // HttpSource's shared client handles Cloudflare through WebViewCookieJar,
+    // matching User-Agent and CloudflareInterceptor before this status check.
     private suspend fun text(url: String): String = get(url).use {
         check(it.isSuccessful) { "GalaxyNovels: HTTP ${it.code}; try opening the site in the app's WebView" }
         it.body?.string() ?: error("GalaxyNovels: empty response")
@@ -75,13 +77,15 @@ class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSource, Pa
         val configText = doc.select("script").firstNotNullOfOrNull { script ->
             Regex("var worReaderSearchConfig = (\\{[^\\n]+});").find(script.data())?.groupValues?.get(1)
         } ?: error("GalaxyNovels: search configuration unavailable")
-        val manifestUrl = JSONObject(configText).getString("manifestUrl")
-        val indexUrl = JSONObject(text(manifestUrl)).getString("index")
-        // Keep the request on the source host even if the cached manifest changes.
-        check(manifestUrl.toHttpUrl().host == baseUrl.toHttpUrl().host && indexUrl.toHttpUrl().host == baseUrl.toHttpUrl().host)
+        val manifestUrl = searchResourceUrl(JSONObject(configText).getString("manifestUrl"))
+        val indexUrl = searchResourceUrl(JSONObject(text(manifestUrl)).getString("index"))
         val items = JSONObject(text(indexUrl)).getJSONArray("items")
         return (0 until items.length()).map { items.getJSONObject(it) }.also { cachedSearch = System.currentTimeMillis() to it }
     }
+
+    private fun searchResourceUrl(url: String): String = url.toHttpUrl().also {
+        check(it.isHttps && it.host == baseUrl.toHttpUrl().host) { "GalaxyNovels: unexpected search resource host" }
+    }.toString()
 
     override suspend fun searchNovels(query: String, page: Int, filters: List<Filter<*>>): List<Novel> = withContext(Dispatchers.IO) {
         require(page > 0)

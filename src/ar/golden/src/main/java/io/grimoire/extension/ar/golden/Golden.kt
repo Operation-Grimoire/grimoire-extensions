@@ -30,7 +30,7 @@ import java.text.Normalizer
 import java.util.ArrayDeque
 
 /** Golden is currently branded Dilar. Catalog search may be in read-only maintenance. */
-@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 3)
+@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 4)
 open class Golden : HttpSource(), LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "Golden"
     override val lang = Language.AR
@@ -38,8 +38,9 @@ open class Golden : HttpSource(), LatestSource, SearchSource, ChapterListSource,
     private val latestMutex = Mutex()
     private var latestCache: LatestCache? = null
 
-    private class LatestCache {
-        val createdAt = System.currentTimeMillis()
+    protected open fun nowMillis(): Long = System.currentTimeMillis()
+
+    private class LatestCache(val createdAt: Long) {
         val pages = mutableListOf<List<Novel>>()
         val pending = ArrayDeque<Novel>()
         val seen = mutableSetOf<String>()
@@ -63,8 +64,10 @@ open class Golden : HttpSource(), LatestSource, SearchSource, ChapterListSource,
     override suspend fun getLatestUpdates(page: Int): List<Novel> = withContext(Dispatchers.IO) {
         require(page > 0)
         latestMutex.withLock {
-            val cache = latestCache?.takeUnless { page == 1 && System.currentTimeMillis() - it.createdAt > 300_000 }
-                ?: LatestCache().also { latestCache = it }
+            // Any direct page request can start a fresh snapshot after expiry.
+            // Rebuild all preceding page boundaries before serving that page.
+            val cache = latestCache?.takeUnless { nowMillis() - it.createdAt > 300_000 }
+                ?: LatestCache(nowMillis()).also { latestCache = it }
             while (cache.pages.size < page) {
                 if (cache.pages.lastOrNull()?.isEmpty() == true) return@withLock emptyList()
                 var fetched = 0
@@ -82,6 +85,8 @@ open class Golden : HttpSource(), LatestSource, SearchSource, ChapterListSource,
                 check(cache.pending.isNotEmpty() || cache.nextReleasePage > cache.lastReleasePage) {
                     "Golden: no new novels in 20 release pages; retry to continue"
                 }
+                // The API permits variable page sizes; a short nonempty page
+                // keeps browsing alive while bounding work in sparse archives.
                 val result = cache.pending.take(12)
                 repeat(result.size) { cache.pending.removeFirst() }
                 cache.pages.add(result)

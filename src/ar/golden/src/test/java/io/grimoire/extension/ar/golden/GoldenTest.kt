@@ -66,7 +66,37 @@ class GoldenTest {
         assertEquals((1..21).toList(), requested)
     }
 
-    private fun releaseSource(pages: Map<Int, List<Pair<Int, Boolean>>>, requested: MutableList<Int>): Golden = object : Golden() {
+    @Test
+    fun `a short sparse page continues to later novels instead of ending the feed`() = runBlocking {
+        val requested = mutableListOf<Int>()
+        val pages = (1..21).associateWith { emptyList<Pair<Int, Boolean>>() }.toMutableMap()
+        pages[1] = listOf(1 to true)
+        pages[21] = listOf(2 to true)
+        val paged = releaseSource(pages, requested)
+        assertEquals(listOf("Book 1"), paged.getLatestUpdates(1).map { it.title })
+        assertEquals(listOf("Book 2"), paged.getLatestUpdates(2).map { it.title })
+        assertTrue(paged.getLatestUpdates(3).isEmpty())
+        assertEquals((1..21).toList(), requested)
+    }
+
+    @Test
+    fun `a direct later-page request refreshes expired results from one new snapshot`() = runBlocking {
+        var now = 0L
+        val requested = mutableListOf<Int>()
+        val pages = mutableMapOf(1 to (1..20).map { it to true }, 2 to (21..40).map { it to true })
+        val paged = releaseSource(pages, requested) { now }
+        assertEquals((13..24).map { "Book $it" }, paged.getLatestUpdates(2).map { it.title })
+        pages[1] = (101..120).map { it to true }
+        pages[2] = (121..140).map { it to true }
+        now = 300_001
+        assertEquals((113..124).map { "Book $it" }, paged.getLatestUpdates(2).map { it.title })
+        assertEquals((101..112).map { "Book $it" }, paged.getLatestUpdates(1).map { it.title })
+        assertEquals(listOf(1, 2, 1, 2), requested)
+    }
+
+    private fun releaseSource(pages: Map<Int, List<Pair<Int, Boolean>>>, requested: MutableList<Int>, clock: () -> Long = System::currentTimeMillis): Golden = object : Golden() {
+        override fun nowMillis(): Long = clock()
+
         override val client = OkHttpClient.Builder().addInterceptor { chain ->
             val url = chain.request().url
             assertEquals("/api/releases", url.encodedPath)

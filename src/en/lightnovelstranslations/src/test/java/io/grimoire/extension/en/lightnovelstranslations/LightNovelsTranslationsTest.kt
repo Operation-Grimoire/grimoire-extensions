@@ -212,4 +212,61 @@ class LightNovelsTranslationsTest {
         assertTrue(pages[1].isSeparator)
         assertEquals("after", pages[2].text)
     }
+
+    // --- Progressive table of contents ----------------------------------
+    // Fixtures captured 2026-11-02 from ShangriLa Frontier: the novel page
+    // trimmed to its first two volume blocks (52 + 98 chapters), plus the two
+    // `lnt_fragment=toc` responses for the second block.
+
+    private fun resource(name: String): String =
+        checkNotNull(javaClass.getResourceAsStream("/$name")) { "missing fixture: /$name" }
+            .bufferedReader().use { it.readText() }
+
+    @Test
+    fun `page count spans every volume block at 50 rows per page`() {
+        // 52 -> 2 pages, 98 -> 2 pages.
+        assertEquals(4, source.tocPageCount(fixture("shangrila-frontier-toc.html")))
+    }
+
+    @Test
+    fun `server-rendered first page yields its 50 rows in reader order`() {
+        val chapters = source.chaptersIn(fixture("shangrila-frontier-toc.html").selectFirst("div.lnt-volume-panel[data-loaded=1]")!!)
+        assertEquals(50, chapters.size)
+        assertEquals("ShangriLa Frontier Chapter 001", chapters.first().name)
+        assertTrue(chapters.first().url.startsWith("https://lightnovelstranslations.com/novel/"))
+        assertFalse(chapters.any { it.locked })
+    }
+
+    @Test
+    fun `fragment pages parse and chain via the next link`() {
+        val p1 = assertNotNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p1.json"), 1))!!
+        assertEquals(50, source.chaptersIn(p1).size)
+        val next = assertNotNull(source.nextTocPageUrl(p1))!!
+        assertTrue(next.contains("lnt_volume=175") && next.contains("lnt_page=2"), next)
+
+        val p2 = assertNotNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p2.json"), 2))!!
+        val rows = source.chaptersIn(p2)
+        assertEquals(48, rows.size)
+        assertEquals("ShangriLa Frontier Chapter 100 Part 2", rows.last().name)
+        assertNull(source.nextTocPageUrl(p2))
+        assertTrue((source.chaptersIn(p1) + rows).map { it.url }.toSet().size == 98)
+    }
+
+    @Test
+    fun `clamped or failed fragment responses are rejected`() {
+        // The server clamps an out-of-range lnt_page to the last page.
+        assertNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p2.json"), 3))
+        assertNull(source.parseTocFragment("""{"success":false,"data":{"message":"Volume not found."}}""", 1))
+        assertNull(source.parseTocFragment("<html>Too many requests</html>", 1))
+    }
+
+    @Test
+    fun `single-list layout without volume blocks is one page`() {
+        val doc = Jsoup.parse(
+            """<div class="novel_list_chapter"><ul><li class="chapter-item unlock"><a href="/novel/x/c1/">C1</a></li></ul></div>""",
+            "https://lightnovelstranslations.com/",
+        )
+        assertEquals(1, source.tocPageCount(doc))
+        assertEquals(listOf("C1"), source.chaptersIn(doc).map { it.name })
+    }
 }

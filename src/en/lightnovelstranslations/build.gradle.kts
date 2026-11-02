@@ -10,8 +10,8 @@ android {
         applicationId = "io.grimoire.extension.en.lightnovelstranslations"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.0.10"
+        versionCode = 12
+        versionName = "1.0.11"
     }
 
     compileOptions {
@@ -38,6 +38,7 @@ android {
 dependencies {
     implementation(project(":lib"))
     testImplementation(libs.junit.jupiter)
+    testImplementation(libs.org.json)
     // Gradle 9 no longer auto-resolves the JUnit Platform Launcher from
     // ServiceLoader — without this dep tests are silently discovered as zero.
     testRuntimeOnly(libs.junit.platform.launcher)

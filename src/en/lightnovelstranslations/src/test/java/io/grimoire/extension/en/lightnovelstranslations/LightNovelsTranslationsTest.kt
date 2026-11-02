@@ -239,12 +239,12 @@ class LightNovelsTranslationsTest {
 
     @Test
     fun `fragment pages parse and chain via the next link`() {
-        val p1 = assertNotNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p1.json"), 1))!!
+        val p1 = checkNotNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p1.json"), 1))
         assertEquals(50, source.chaptersIn(p1).size)
-        val next = assertNotNull(source.nextTocPageUrl(p1))!!
+        val next = checkNotNull(source.nextTocPageUrl(p1))
         assertTrue(next.contains("lnt_volume=175") && next.contains("lnt_page=2"), next)
 
-        val p2 = assertNotNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p2.json"), 2))!!
+        val p2 = checkNotNull(source.parseTocFragment(resource("shangrila-frontier-toc-v175-p2.json"), 2))
         val rows = source.chaptersIn(p2)
         assertEquals(48, rows.size)
         assertEquals("ShangriLa Frontier Chapter 100 Part 2", rows.last().name)

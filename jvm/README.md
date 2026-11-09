@@ -57,11 +57,12 @@ host API. The common fixture contract covers browse/latest/search/details,
 chapter ordering/locks, rich content and hidden-text removal. Its result includes
 the exact JAR hash. `contract/` is test-only and is never packaged in extensions.
 
-Native parity requires the Grimoire worktree's
-`desktop-poc/artifact-contract/verify.ps1`; it loads the actual APK with
-DexClassLoader and compares the same contract and artifact hashes. A successful
-APK build alone is not native parity. `artifacts.json` intentionally records that
-the packaging command does not run Android instrumentation.
+Native APK parity was validated with a local Android instrumentation harness
+that loads the APK with DexClassLoader and compares the same contract and
+artifact hashes. That prototype harness remains local; this change ships the
+maintained JVM contract and packaging tools. A reusable Android CI harness is
+still needed. A successful APK build alone is not native parity.
+`artifacts.json` records that the packaging command does not run instrumentation.
 
 Only Royal Road is enabled. Shared extension bases containing Android code,
 browser capabilities, signed JAR distribution/trust, release indexes, reusable

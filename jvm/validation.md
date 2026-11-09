@@ -29,3 +29,9 @@ No remote CI, publication, signing, release-index edits, authenticated source
 login, real browser challenge solve or other-source JVM artifacts were executed.
 Existing Android release declarations, catalog pins and reusable workflows remain
 unchanged. Native fixture parity is not evidence of universal site/browser parity.
+
+The Android artifact harness and desktop/session prototypes remain local and are
+excluded from the checkpoint PRs. JVM parser/contract tests and packaging gates
+are committed here; the native result above is recorded local evidence, not an
+Android CI job that this PR adds. Existing remote APK preview checks do not cover
+the new JVM artifact path.

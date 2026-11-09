@@ -45,5 +45,13 @@ jobs:
           path: |
             jvm/royalroad/build/libs/*.jar
             jvm/royalroad/build/contract-jvm.json
-            jvm/royalroad/build/test-results/test/*.xml
           if-no-files-found: error
+      - name: Upload test reports even when tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: royalroad-tests-${{ github.sha }}
+          path: |
+            jvm/royalroad/build/test-results/test/*.xml
+            jvm/royalroad/build/reports/tests/test/
+          if-no-files-found: ignore

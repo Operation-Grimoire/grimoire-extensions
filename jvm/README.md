@@ -38,6 +38,8 @@ tests and the packaged-JAR contract on every PR and main push. It uses the
 published core, with no API checkout or composite, and uploads the JAR, contract
 snapshot and test XML. The JVM-only job needs no Android build. APK preview/release
 workflows remain separate; a passing JVM job is not Android/browser parity.
+Test reports are retained even when tests fail. JAR/contract artifacts are
+uploaded only after a successful build.
 
 ## Format 1 metadata
 

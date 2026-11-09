@@ -5,7 +5,7 @@ plugins { kotlin("jvm") }
 
 val sourceRoot = rootProject.file("../src/en/royalroad")
 val metadata = Properties().apply { sourceRoot.resolve("extension.properties").inputStream().use(::load) }
-val apiVersion = providers.gradleProperty("extensionsCoreVersion").orElse("1.3.0-SNAPSHOT")
+val apiVersion = providers.gradleProperty("extensionsCoreVersion").orElse(libs.versions.extensionsApi)
 
 kotlin {
     jvmToolchain(21)

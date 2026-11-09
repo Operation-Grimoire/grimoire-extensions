@@ -34,6 +34,10 @@ build/
 # Local config
 local.properties
 
+# Python validation tools
+__pycache__/
+*.pyc
+
 # IDE
 .idea/
 *.iml

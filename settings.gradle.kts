@@ -24,6 +24,16 @@ dependencyResolutionManagement {
 
 rootProject.name = "grimoire-extensions"
 
+// Opt-in development against the unpublished shared runtime; release pins stay in the catalog.
+providers.gradleProperty("grimoireApiDir").orNull?.let {
+    includeBuild(it) {
+        dependencySubstitution {
+            substitute(module("io.grimoire:extensions-api")).using(project(":api"))
+            substitute(module("io.grimoire:extensions-core")).using(project(":core"))
+        }
+    }
+}
+
 include(":lib")
 
 // Auto-include all extensions from src/{lang}/{name}/

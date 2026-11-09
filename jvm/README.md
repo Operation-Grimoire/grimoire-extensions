@@ -63,7 +63,9 @@ both are preserved. Source ID uses the same package hash on both targets.
 The packaged JAR test loads classes with a separate URLClassLoader and shares the
 host API. The common fixture contract covers browse/latest/search/details,
 chapter ordering/locks, rich content and hidden-text removal. Its result includes
-the exact JAR hash. `contract/` is test-only and is never packaged in extensions.
+the exact JAR hash. The fixture lives in `royalroad/src/test/kotlin` and is never
+packaged in extensions. It supplies synthetic HTTP responses and expected results;
+the parser itself comes from the existing extension source tree.
 
 Native APK parity was validated with a local Android instrumentation harness
 that loads the APK with DexClassLoader and compares the same contract and

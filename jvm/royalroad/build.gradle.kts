@@ -13,7 +13,6 @@ kotlin {
     sourceSets.main { kotlin.srcDir(sourceRoot.resolve("src/main/java")) }
     sourceSets.test {
         kotlin.srcDir(sourceRoot.resolve("src/test/java"))
-        kotlin.srcDir(rootProject.file("contract/src/main/kotlin"))
     }
 }
 java {

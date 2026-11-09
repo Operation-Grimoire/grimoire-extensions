@@ -5,7 +5,7 @@ plugins { kotlin("jvm") }
 
 val sourceRoot = rootProject.file("../src/en/royalroad")
 val metadata = Properties().apply { sourceRoot.resolve("extension.properties").inputStream().use(::load) }
-val apiVersion = providers.gradleProperty("extensionsCoreVersion").orElse("1.3.0-SNAPSHOT")
+val apiVersion = providers.gradleProperty("extensionsCoreVersion").orElse(libs.versions.extensionsApi)
 
 kotlin {
     jvmToolchain(21)
@@ -13,7 +13,6 @@ kotlin {
     sourceSets.main { kotlin.srcDir(sourceRoot.resolve("src/main/java")) }
     sourceSets.test {
         kotlin.srcDir(sourceRoot.resolve("src/test/java"))
-        kotlin.srcDir(rootProject.file("contract/src/main/kotlin"))
     }
 }
 java {

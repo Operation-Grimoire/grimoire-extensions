@@ -6,11 +6,12 @@ builds the APK. API and host libraries are supplied by the host process.
 
 ## Building and verifying
 
-Use JDK 21, Python 3 and Android SDK 36 with build-tools. Set `ANDROID_HOME`.
-Until the core package is published, pass a local API checkout containing `core/`:
+Use JDK 21, Python 3 and Android SDK 36 with build-tools. Set `ANDROID_HOME` and
+GitHub Packages credentials (`GITHUB_ACTOR`, `GITHUB_TOKEN` with package-read access).
+The normal build consumes the published API/core release:
 
 ```sh
-python scripts/build_dual.py --api /path/to/shared-runtime-api
+python scripts/build_dual.py
 python -m unittest discover -s scripts/tests -v
 ```
 
@@ -24,14 +25,21 @@ sign, publish or change the release index. `--verify-only` checks existing outpu
 To build only the JVM target:
 
 ```sh
-./gradlew -p jvm :royalroad:test :royalroad:jar \
-  -PgrimoireApiDir=/path/to/shared-runtime-api --no-build-cache
+./gradlew -p jvm :royalroad:test :royalroad:jar --no-build-cache
 ```
 
-Without the composite, `extensions-core:1.3.0-SNAPSHOT` resolves through GitHub
-Packages using `GITHUB_ACTOR` and `GITHUB_TOKEN`. `extensionsCoreVersion` overrides
-that dependency. The normal Android catalog stays pinned to its existing API.
-The optional root composite substitutes the wrapper and core only for local work.
+Android and JVM builds share the stable `1.3.0` API version from
+`gradle/libs.versions.toml`. `extensionsCoreVersion` can override the JVM core for
+development. A local API checkout is optional: pass `--api` to the dual-build
+script or `-PgrimoireApiDir` to Gradle to substitute it for the published package.
+
+The JVM artifacts workflow runs the Python rejection gates, all Royal Road parser
+tests and the packaged-JAR contract on every PR and main push. It uses the
+published core, with no API checkout or composite, and uploads the JAR, contract
+snapshot and test XML. The JVM-only job needs no Android build. APK preview/release
+workflows remain separate; a passing JVM job is not Android/browser parity.
+Test reports are retained even when tests fail. JAR/contract artifacts are
+uploaded only after a successful build.
 
 ## Format 1 metadata
 
@@ -55,7 +63,9 @@ both are preserved. Source ID uses the same package hash on both targets.
 The packaged JAR test loads classes with a separate URLClassLoader and shares the
 host API. The common fixture contract covers browse/latest/search/details,
 chapter ordering/locks, rich content and hidden-text removal. Its result includes
-the exact JAR hash. `contract/` is test-only and is never packaged in extensions.
+the exact JAR hash. The fixture lives in `royalroad/src/test/kotlin` and is never
+packaged in extensions. It supplies synthetic HTTP responses and expected results;
+the parser itself comes from the existing extension source tree.
 
 Native APK parity was validated with a local Android instrumentation harness
 that loads the APK with DexClassLoader and compares the same contract and

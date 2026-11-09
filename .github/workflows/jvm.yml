@@ -1,0 +1,57 @@
+name: JVM extension artifacts
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: jvm-artifacts-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  royalroad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test artifact validation gates
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build and test the published-core JVM extension
+        run: |
+          chmod +x gradlew
+          ./gradlew -p jvm :royalroad:test :royalroad:jar --no-daemon --stacktrace
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload the JAR and contract evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: royalroad-jvm-${{ github.sha }}
+          path: |
+            jvm/royalroad/build/libs/*.jar
+            jvm/royalroad/build/contract-jvm.json
+          if-no-files-found: error
+      - name: Upload test reports even when tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: royalroad-tests-${{ github.sha }}
+          path: |
+            jvm/royalroad/build/test-results/test/*.xml
+            jvm/royalroad/build/reports/tests/test/
+          if-no-files-found: ignore

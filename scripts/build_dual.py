@@ -28,6 +28,51 @@ def module_name(directory: Path) -> str:
     return f"{directory.parent.name}-{directory.name}"
 
 
+def _declaration(text: str, label: str, pattern: str, where: str) -> str:
+    match = re.search(pattern, text)
+    if not match:
+        raise ValueError(f"{where} has no {label}")
+    return match.group(1)
+
+
+def source_identity(directory: Path) -> dict[str, str]:
+    """Read the identity the Android module declares right now.
+
+    This is the same metadata the JVM build copies into the JAR manifest.
+    Verification must use it instead of the last build's identity.json, or a
+    stale JAR passes after applicationId or version changes.
+    """
+    name = module_name(directory)
+    gradle = (directory / "build.gradle.kts").read_text(encoding="utf-8")
+    package_name = _declaration(gradle, "applicationId", r'applicationId\s*=\s*"([^"]+)"', f"{name} build.gradle.kts")
+    version_code = _declaration(gradle, "versionCode", r"versionCode\s*=\s*(\d+)", f"{name} build.gradle.kts")
+    version_name = _declaration(gradle, "versionName", r'versionName\s*=\s*"([^"]+)"', f"{name} build.gradle.kts")
+    manifest = (directory / "src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+    source_class = _declaration(
+        manifest, "grimoire.extension.class",
+        r'android:name="grimoire\.extension\.class"[\s\S]*?android:value="([^"]+)"',
+        f"{name} manifest")
+    sources = sorted((directory / "src/main/java").rglob("*.kt"))
+    if not sources:
+        raise ValueError(f"{name} has no Kotlin sources")
+    joined = "\n".join(path.read_text(encoding="utf-8") for path in sources)
+    at = joined.find("@SourceInfo")
+    if at < 0:
+        raise ValueError(f"{name} has no @SourceInfo")
+    source_version = _declaration(
+        joined[at:at + 800], "versionCode", r"versionCode\s*=\s*(\d+)", f"{name} @SourceInfo")
+    return {"package": package_name, "sourceClass": source_class, "versionCode": version_code,
+            "versionName": version_name, "sourceVersionCode": source_version}
+
+
+def expected_identity(directory: Path, generated: dict) -> dict[str, str]:
+    expected = source_identity(directory)
+    actual = {key: str(generated[key]) for key in expected if key in generated}
+    if actual != expected:
+        raise ValueError(f"{module_name(directory)} identity.json does not match the current Android declarations")
+    return expected
+
+
 def validate_jar(jar: Path, expected: dict[str, str]) -> dict[str, str]:
     attrs = manifest(jar)
     pairs = {"package": "Grimoire-Source-Package", "sourceClass": "Grimoire-Source-Class",
@@ -110,10 +155,13 @@ def main() -> None:
     for directory in directories:
         name = module_name(directory)
         identity_path = ROOT / "jvm" / "build" / "extensions" / name / "identity.json"
-        identity = json.loads(identity_path.read_text(encoding="utf-8"))
-        expected = {key: str(identity[key]) for key in
-                    ("package", "sourceClass", "versionCode", "versionName", "sourceVersionCode")}
+        if not identity_path.is_file():
+            raise ValueError(f"{name} has no identity.json; build the JAR before verifying")
+        generated = json.loads(identity_path.read_text(encoding="utf-8"))
+        expected = expected_identity(directory, generated)
         jar = ROOT / "jvm" / "build" / "extensions" / name / f"{expected['package']}-{expected['versionName']}.jar"
+        if not jar.is_file():
+            raise ValueError(f"{name} JAR does not match the current Android version: {jar.name}")
         if args.jars_only:
             validate_jar(jar, expected)
             continue
@@ -138,9 +186,9 @@ def main() -> None:
         (output / "artifacts.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"Verified {name}: {output}")
     if args.jars_only:
-        royal = json.loads((ROOT / "jvm/build/extensions/en-royalroad/identity.json").read_text(encoding="utf-8"))
-        jar = ROOT / "jvm/build/extensions/en-royalroad" / f"{royal['package']}-{royal['versionName']}.jar"
-        expected = {key: str(royal[key]) for key in ("sourceClass", "sourceVersionCode")}
+        royal_dir = ROOT / "src" / "en" / "royalroad"
+        expected = source_identity(royal_dir)
+        jar = ROOT / "jvm/build/extensions/en-royalroad" / f"{expected['package']}-{expected['versionName']}.jar"
         royal_road_contract(jar, expected)
         print(f"Verified {len(directories)} JARs and the Royal Road contract")
 

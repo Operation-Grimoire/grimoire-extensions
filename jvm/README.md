@@ -21,7 +21,10 @@ JVM contract. It validates APK/JAR identity with `aapt2`, rejects bundled API,
 foreign classes, and Android references, and writes both artifacts plus SHA-256
 hashes under `build/dual/<module>/`.
 `--variant release` builds the existing unsigned release variant. It does not
-sign, publish or change the release index. `--verify-only` checks existing output.
+sign, publish or change the release index. `--verify-only` checks existing output
+against the current Android declarations: `applicationId`, `versionCode`,
+`versionName`, the manifest class, and the `@SourceInfo` versionCode. The
+generated `identity.json` is accepted only when it matches those declarations.
 
 To build only the JVM target:
 

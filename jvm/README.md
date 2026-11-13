@@ -1,8 +1,9 @@
 # JVM extension artifacts
 
-Royal Road is the first dual-target source. The JVM build compiles its unchanged
-`src/main/java` source tree into a thin Java 11 JAR. The normal Android project
-builds the APK. API and host libraries are supplied by the host process.
+Each extension keeps one directory, `src/<language>/<name>`. The Android build
+and the JVM build both walk those directories. The JVM build compiles each
+`src/main/java` tree into a thin Java 11 JAR. API and host libraries are supplied
+by the host process.
 
 ## Building and verifying
 
@@ -15,18 +16,22 @@ python scripts/build_dual.py
 python -m unittest discover -s scripts/tests -v
 ```
 
-The script sequentially builds the debug APK, runs Android-side parser unit
-tests, builds the JAR and runs JVM parser/artifact tests. It validates APK/JAR
-identity with `aapt2`, rejects bundled API/foreign classes and Android references,
-and writes both artifacts plus SHA-256 hashes to `build/dual/royalroad/`.
+The script assembles every debug APK, builds every JAR, and runs the Royal Road
+JVM contract. It validates APK/JAR identity with `aapt2`, rejects bundled API,
+foreign classes, and Android references, and writes both artifacts plus SHA-256
+hashes under `build/dual/<module>/`.
 `--variant release` builds the existing unsigned release variant. It does not
 sign, publish or change the release index. `--verify-only` checks existing output.
 
 To build only the JVM target:
 
 ```sh
-./gradlew -p jvm :royalroad:test :royalroad:jar --no-build-cache
+./gradlew -p jvm test jars --no-build-cache
 ```
+
+`python scripts/build_dual.py --jars-only` checks those JARs without assembling APKs.
+The default command assembles every extension APK, builds every JAR, and checks that
+each pair names the same package, class, and version.
 
 Android and JVM builds share the `1.4.1-SNAPSHOT` API version from
 `gradle/libs.versions.toml`. `extensionsCoreVersion` can override the JVM core for
@@ -49,24 +54,26 @@ The JAR manifest declares `Grimoire-Extension-Format: 1`,
 `Grimoire-Source-Version-Code`. `Grimoire-Host-Libraries` identifies the required
 `org.json:json:20240303` JVM host dependency. Kotlin, OkHttp, Jsoup, coroutines and
 the core API also come from the host. The JAR bundles none of those libraries.
-GalaxyNovels asks the host to render a page through `SourceBrowser`. That source
-compiles in the portable JVM check. A desktop host still implements
-`SourceDocumentBrowser` before those pages render.
+GalaxyNovels asks the host to render a page through `SourceBrowser`. A desktop
+host still implements `SourceDocumentBrowser` before those pages render. Sources
+that use `io.grimoire.extensions.lib` also need the host JAR written to
+`jvm/build/host`.
 
-`src/en/royalroad/extension.properties` mirrors the existing Android package,
-entry point and artifact versions. Keep it in step with Android build declarations
-and `@SourceInfo` on future behavior changes. The build gate rejects drift. The
-artifact versionCode (4) and annotation versionCode (5) were already distinct;
-both are preserved. Source ID uses the same package hash on both targets.
+The JVM build reads each extension's `applicationId`, `versionCode`, and
+`versionName` from its Android `build.gradle.kts`, the entry point from
+`AndroidManifest.xml`, and the source `versionCode` from `@SourceInfo`. The
+artifact version and the annotation version stay independent. Royal Road keeps
+artifact versionCode 4 and annotation versionCode 5. Source ID uses the same
+package hash on both targets.
 
 ## Runtime parity and remaining work
 
 The packaged JAR test loads classes with a separate URLClassLoader and shares the
 host API. The common fixture contract covers browse/latest/search/details,
 chapter ordering/locks, rich content and hidden-text removal. Its result includes
-the exact JAR hash. The fixture lives in `royalroad/src/test/kotlin` and is never
-packaged in extensions. It supplies synthetic HTTP responses and expected results;
-the parser itself comes from the existing extension source tree.
+the exact JAR hash. The fixture lives in `jvm/src/test/kotlin` and is never packaged in extensions.
+It supplies synthetic HTTP responses and expected results; the parser itself
+comes from `src/en/royalroad`.
 
 Native APK parity was validated with a local Android instrumentation harness
 that loads the APK with DexClassLoader and compares the same contract and
@@ -75,8 +82,8 @@ maintained JVM contract and packaging tools. A reusable Android CI harness is
 still needed. A successful APK build alone is not native parity.
 `artifacts.json` records that the packaging command does not run instrumentation.
 
-Only Royal Road has a verified APK/JAR contract. The `portable` module compiles
-the shared library plus WebNovel, Azure Chronicles, Z-Library, and GalaxyNovels
-against the host cookie and document-browser interfaces. Signed JAR distribution,
+Every extension under `src/<language>/<name>` gets a thin JAR from that same
+directory. Only Royal Road has the fixture contract on top of the identity check.
+Signed JAR distribution,
 release indexes, reusable `extensions-ci` integration, and publication remain
 later work. See [local validation](validation.md) for the completed Royal Road proof.

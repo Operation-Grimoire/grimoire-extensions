@@ -16,6 +16,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "grimoire-extensions-jvm"
 include(":royalroad")
+include(":portable")
 providers.gradleProperty("grimoireApiDir").orNull?.let {
     includeBuild(it) {
         dependencySubstitution {

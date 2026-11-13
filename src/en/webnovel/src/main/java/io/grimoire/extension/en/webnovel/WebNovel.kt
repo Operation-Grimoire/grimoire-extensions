@@ -1,6 +1,5 @@
 package io.grimoire.extension.en.webnovel
 
-import android.webkit.CookieManager
 import io.grimoire.api.model.filter.Filter
 import io.grimoire.api.model.lang.Language
 import io.grimoire.api.model.novel.Chapter
@@ -19,6 +18,7 @@ import io.grimoire.api.source.feature.SearchSource
 import io.grimoire.api.source.feature.WebViewLoginSource
 import io.grimoire.api.source.http.HttpSource
 import io.grimoire.api.source.web.ChapterListSource
+import io.grimoire.api.network.SourceCookies
 import io.grimoire.api.source.web.PageListSource
 import io.grimoire.api.util.richDescription
 import io.grimoire.api.util.richHtml
@@ -127,18 +127,17 @@ class WebNovel :
 
     /** Webnovel stores the signed-in user's id in the `uid` cookie. */
     override suspend fun isLoggedIn(): Boolean = withContext(Dispatchers.IO) {
-        val raw = CookieManager.getInstance().getCookie(baseUrl).orEmpty()
+        val raw = SourceCookies.header(baseUrl)
         val uid = cookieValue(raw, "uid")
         !uid.isNullOrBlank() && uid != "0"
     }
 
     override suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        val cm = CookieManager.getInstance()
         // Collect cookie names across every host Webnovel sets them on — the
         // session cookies (uid, _csrfToken, …) are spread over the passport and
         // m. subdomains, not just baseUrl.
         val names = COOKIE_DOMAINS
-            .flatMap { url -> cm.getCookie(url).orEmpty().split(';') }
+            .flatMap { url -> SourceCookies.header(url).split(';') }
             .map { it.substringBefore('=').trim() }
             .filter { it.isNotEmpty() }
             .toSet()
@@ -148,13 +147,13 @@ class WebNovel :
         // attribute, or the login survives logout.
         names.forEach { name ->
             COOKIE_DOMAINS.forEach { url ->
-                cm.setCookie(url, "$name=; $COOKIE_EXPIRY")
+                SourceCookies.set(url, "$name=; $COOKIE_EXPIRY")
                 COOKIE_PARENT_DOMAINS.forEach { domain ->
-                    cm.setCookie(url, "$name=; Domain=$domain; $COOKIE_EXPIRY")
+                    SourceCookies.set(url, "$name=; Domain=$domain; $COOKIE_EXPIRY")
                 }
             }
         }
-        cm.flush()
+        SourceCookies.flush()
     }
 
     // --- Listings ------------------------------------------------------------
@@ -187,7 +186,7 @@ class WebNovel :
             return GET("$RANKING_URL?sex=$rankingSex&pageIndex=$page")
         }
         val csrf = runCatching {
-            cookieValue(CookieManager.getInstance().getCookie(RANKING_URL).orEmpty(), "_csrfToken")
+            cookieValue(SourceCookies.header(RANKING_URL), "_csrfToken")
         }.getOrNull()
         val url = buildString {
             append(RANKING_API).append('?').append(query).append("&pageIndex=").append(page)
@@ -507,7 +506,7 @@ class WebNovel :
     private fun apiRequest(url: String): Request {
         val csrf = runCatching {
             cookieValue(
-                CookieManager.getInstance().getCookie("https://m.webnovel.com").orEmpty(),
+                SourceCookies.header("https://m.webnovel.com"),
                 "_csrfToken",
             )
         }.getOrNull()

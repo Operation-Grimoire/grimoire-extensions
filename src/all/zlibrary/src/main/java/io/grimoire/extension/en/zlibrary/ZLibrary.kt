@@ -1,10 +1,10 @@
 package io.grimoire.extension.en.zlibrary
 
-import android.webkit.CookieManager
 import io.grimoire.api.model.filter.Filter
 import io.grimoire.api.model.lang.Language
 import io.grimoire.api.model.novel.Novel
 import io.grimoire.api.model.novel.NovelStatus
+import io.grimoire.api.network.SourceCookies
 import io.grimoire.api.network.failoverClient
 import io.grimoire.api.source.SourceInfo
 import io.grimoire.api.source.epub.EpubSource
@@ -121,14 +121,13 @@ class ZLibrary :
     // Z-Library issues `remix_userid` (+ `remix_userkey`) cookies on sign-in;
     // a logged-out jar has neither (or `remix_userid=0`).
     override suspend fun isLoggedIn(): Boolean = withContext(Dispatchers.IO) {
-        val raw = CookieManager.getInstance().getCookie(baseUrl).orEmpty()
+        val raw = SourceCookies.header(baseUrl)
         val userId = cookieValue(raw, "remix_userid")
         (!userId.isNullOrBlank() && userId != "0") ||
             !cookieValue(raw, "remix_userkey").isNullOrBlank()
     }
 
     override suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        val cm = CookieManager.getInstance()
         val host = baseUrl.toHttpUrlOrNull()?.host
         val scopes = buildList {
             add(baseUrl)
@@ -150,13 +149,13 @@ class ZLibrary :
         }.distinct()
         // Expire every cookie currently set on the mirror — the session cookie
         // name varies by deployment, so clearing all of them is the safe option.
-        val names = cm.getCookie(baseUrl).orEmpty()
+        val names = SourceCookies.header(baseUrl)
             .split(';').map { it.substringBefore('=').trim() }.filter { it.isNotEmpty() }
         for (name in names) for (scope in scopes) {
-            cm.setCookie(scope, "$name=; $COOKIE_EXPIRY")
-            for (domain in domains) cm.setCookie(scope, "$name=; Domain=$domain; $COOKIE_EXPIRY")
+            SourceCookies.set(scope, "$name=; $COOKIE_EXPIRY")
+            for (domain in domains) SourceCookies.set(scope, "$name=; Domain=$domain; $COOKIE_EXPIRY")
         }
-        cm.flush()
+        SourceCookies.flush()
     }
 
     // --- MultiLanguageSource --------------------------------------------------

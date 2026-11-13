@@ -15,7 +15,7 @@ class ArtifactGatesTest(unittest.TestCase):
     def test_jar_rejects_api_bundling_and_incompatible_metadata_before_android_tools(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
                     "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
-        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.3",
+        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.4",
                    "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                    "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
         with tempfile.TemporaryDirectory() as directory:

@@ -34,24 +34,26 @@ jobs:
       - name: Build and test the published-core JVM extension
         run: |
           chmod +x gradlew
-          ./gradlew -p jvm :royalroad:test :royalroad:jar :portable:compileKotlin --no-daemon --stacktrace
+          ./gradlew -p jvm test jars --no-daemon --stacktrace
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload the JAR and contract evidence
         uses: actions/upload-artifact@v4
         with:
-          name: royalroad-jvm-${{ github.sha }}
+          name: extension-jars-${{ github.sha }}
           path: |
-            jvm/royalroad/build/libs/*.jar
-            jvm/royalroad/build/contract-jvm.json
+            jvm/build/extensions/**/*.jar
+            jvm/build/extensions/**/identity.json
+            jvm/build/extensions/en-royalroad/contract-jvm.json
+            jvm/build/host/*.jar
           if-no-files-found: error
       - name: Upload test reports even when tests fail
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: royalroad-tests-${{ github.sha }}
+          name: extension-jvm-tests-${{ github.sha }}
           path: |
-            jvm/royalroad/build/test-results/test/*.xml
-            jvm/royalroad/build/reports/tests/test/
+            jvm/build/test-results/test/*.xml
+            jvm/build/reports/tests/test/
           if-no-files-found: ignore

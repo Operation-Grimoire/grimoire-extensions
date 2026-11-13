@@ -7,7 +7,7 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from build_dual import validate
+from build_dual import expected_identity, extension_dirs, source_identity, validate
 from compare_contracts import compare
 
 
@@ -54,6 +54,78 @@ class ArtifactGatesTest(unittest.TestCase):
                 compare(changed, jvm_report, artifacts)
         with self.assertRaises(ValueError):
             compare(native, {"contract": jvm, "jarSha256": "stale"}, artifacts)
+
+
+class SourceIdentityTest(unittest.TestCase):
+    def _write_extension(self, root: Path, *, version_name: str = "1.0.3", source_version: str = "5", one_line: bool = False) -> None:
+        (root / "build.gradle.kts").write_text(
+            'applicationId = "io.grimoire.extension.fixture"\n'
+            "versionCode = 4\n"
+            f'versionName = "{version_name}"\n',
+            encoding="utf-8")
+        main = root / "src" / "main"
+        main.mkdir(parents=True)
+        (main / "AndroidManifest.xml").write_text(
+            '<meta-data\n'
+            '    android:name="grimoire.extension.class"\n'
+            '    android:value="io.grimoire.extension.fixture.Fixture" />\n',
+            encoding="utf-8")
+        java = main / "java"
+        java.mkdir()
+        if one_line:
+            source = f'@SourceInfo(name = "Fixture", versionCode = {source_version})\nclass Fixture\n'
+        else:
+            source = f'@SourceInfo(\n    name = "Fixture",\n    versionCode = {source_version},\n)\nclass Fixture\n'
+        (java / "Fixture.kt").write_text(source, encoding="utf-8")
+
+    def test_source_identity_keeps_artifact_version_separate_from_annotation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_extension(root)
+            self.assertEqual(source_identity(root), {
+                "package": "io.grimoire.extension.fixture",
+                "sourceClass": "io.grimoire.extension.fixture.Fixture",
+                "versionCode": "4",
+                "versionName": "1.0.3",
+                "sourceVersionCode": "5",
+            })
+
+    def test_one_line_source_info_still_supplies_the_annotation_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_extension(root, source_version="12", one_line=True)
+            self.assertEqual(source_identity(root)["sourceVersionCode"], "12")
+
+    def test_stale_identity_json_fails_after_the_android_declaration_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_extension(root, version_name="1.0.4", source_version="9")
+            stale = {"package": "io.grimoire.extension.fixture",
+                     "sourceClass": "io.grimoire.extension.fixture.Fixture",
+                     "versionCode": "4", "versionName": "1.0.3", "sourceVersionCode": "5"}
+            with self.assertRaisesRegex(ValueError, "current Android declarations"):
+                expected_identity(root, stale)
+            current = dict(stale, versionName="1.0.4", sourceVersionCode="9")
+            self.assertEqual(expected_identity(root, current)["versionName"], "1.0.4")
+
+    def test_royal_road_identity_comes_from_its_android_module(self):
+        identity = source_identity(Path(__file__).resolve().parents[2] / "src" / "en" / "royalroad")
+        self.assertEqual(identity["package"], "io.grimoire.extension.en.royalroad")
+        self.assertEqual(identity["sourceClass"], "io.grimoire.extension.en.royalroad.RoyalRoad")
+        self.assertEqual(identity["versionCode"], "4")
+        self.assertEqual(identity["versionName"], "1.0.3")
+        self.assertEqual(identity["sourceVersionCode"], "5")
+
+    def test_every_extension_declares_a_readable_identity(self):
+        directories = extension_dirs()
+        self.assertGreaterEqual(len(directories), 26)
+        for directory in directories:
+            identity = source_identity(directory)
+            with self.subTest(module=f"{directory.parent.name}-{directory.name}"):
+                self.assertTrue(identity["sourceClass"].startswith(identity["package"]))
+                self.assertTrue(identity["versionCode"].isdigit())
+                self.assertTrue(identity["sourceVersionCode"].isdigit())
+                self.assertTrue(identity["versionName"])
 
 
 if __name__ == "__main__":

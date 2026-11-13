@@ -22,9 +22,14 @@ val coreApi = apiVersion.map { version ->
     version.removeSuffix("-SNAPSHOT").split(".").take(2).joinToString(".")
 }
 val repo = rootProject.layout.projectDirectory.dir("..")
-val libVersion = Regex("""\?: "([0-9][^"]*)"""")
-    .find(repo.file("lib/build.gradle.kts").asFile.readText())
-    ?.groupValues?.get(1)
+val libVersion = System.getenv("LIB_RELEASE_TAG")
+    ?.trim()
+    ?.removePrefix("lib-v")
+    ?.removePrefix("v")
+    ?.takeIf { it.isNotEmpty() }
+    ?: Regex("""\?: "([0-9][^"]*)"""")
+        .find(repo.file("lib/build.gradle.kts").asFile.readText())
+        ?.groupValues?.get(1)
     ?: error("Could not read the lib publish version from lib/build.gradle.kts")
 
 fun hostDependencies(configuration: String) {

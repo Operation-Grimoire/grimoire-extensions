@@ -75,6 +75,17 @@ def find_aapt2(explicit: str | None) -> Path:
     return sorted(candidates, key=lambda path: tuple(int(n) for n in re.findall(r"\d+", path.parent.name)))[-1]
 
 
+def royal_road_contract(jar: Path, expected: dict[str, str]) -> dict:
+    report_path = ROOT / "jvm/build/extensions/en-royalroad/contract-jvm.json"
+    jvm_report = json.loads(report_path.read_text(encoding="utf-8"))
+    contract = jvm_report["contract"]
+    if jvm_report["jarSha256"] != hashlib.sha256(jar.read_bytes()).hexdigest():
+        raise ValueError("JVM contract proof belongs to a different JAR")
+    if str(contract["sourceVersionCode"]) != expected["sourceVersionCode"] or contract["sourceClass"] != expected["sourceClass"]:
+        raise ValueError("Packaged source annotation differs from artifact metadata")
+    return jvm_report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api", help="API checkout containing extensions-core (opt-in composite)")
@@ -93,7 +104,7 @@ def main() -> None:
     if not args.verify_only:
         if not args.jars_only:
             variant = args.variant.capitalize()
-            subprocess.run([str(wrapper), f"assemble{variant}", *options], cwd=ROOT, check=True)
+            subprocess.run([str(wrapper), f"assemble{variant}", f":en-royalroad:test{variant}UnitTest", *options], cwd=ROOT, check=True)
         subprocess.run([str(wrapper), "-p", "jvm", "jars", "test", *options], cwd=ROOT, check=True)
     aapt2 = None if args.jars_only else find_aapt2(args.aapt2)
     for directory in directories:
@@ -111,32 +122,26 @@ def main() -> None:
             raise ValueError(f"Expected one {args.variant} APK for {name}; found {len(apk_files)}")
         apk = apk_files[0]
         attrs = validate(jar, apk, aapt2, expected)
+        report = {"format": 1, "module": name, "identity": expected,
+                  "jvmCoreApi": attrs["Grimoire-Core-Api"],
+                  "androidRuntimeParity": "UNEXECUTED by this build command"}
+        if name == "en-royalroad":
+            contract = royal_road_contract(jar, expected)["contract"]
+            report["sourceId"] = contract["sourceId"]
         output = ROOT / "build" / "dual" / name
         output.mkdir(parents=True, exist_ok=True)
         artifacts = {}
         for kind, path in (("android", apk), ("jvm", jar)):
             shutil.copy2(path, output / path.name)
             artifacts[kind] = {"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-        report = {"format": 1, "module": name, "identity": expected,
-                  "jvmCoreApi": attrs["Grimoire-Core-Api"], "artifacts": artifacts,
-                  "androidRuntimeParity": "UNEXECUTED by this build command"}
-        if name == "en-royalroad":
-            jvm_report = json.loads((ROOT / "jvm/build/extensions/en-royalroad/contract-jvm.json").read_text(encoding="utf-8"))
-            contract = jvm_report["contract"]
-            if jvm_report["jarSha256"] != hashlib.sha256(jar.read_bytes()).hexdigest():
-                raise ValueError("JVM contract proof belongs to a different JAR")
-            if str(contract["sourceVersionCode"]) != expected["sourceVersionCode"] or contract["sourceClass"] != expected["sourceClass"]:
-                raise ValueError("Packaged source annotation differs from artifact metadata")
-            report["sourceId"] = contract["sourceId"]
+        report["artifacts"] = artifacts
         (output / "artifacts.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"Verified {name}: {output}")
     if args.jars_only:
-        report_path = ROOT / "jvm/build/extensions/en-royalroad/contract-jvm.json"
-        jvm_report = json.loads(report_path.read_text(encoding="utf-8"))
         royal = json.loads((ROOT / "jvm/build/extensions/en-royalroad/identity.json").read_text(encoding="utf-8"))
         jar = ROOT / "jvm/build/extensions/en-royalroad" / f"{royal['package']}-{royal['versionName']}.jar"
-        if jvm_report["jarSha256"] != hashlib.sha256(jar.read_bytes()).hexdigest():
-            raise ValueError("JVM contract proof belongs to a different JAR")
+        expected = {key: str(royal[key]) for key in ("sourceClass", "sourceVersionCode")}
+        royal_road_contract(jar, expected)
         print(f"Verified {len(directories)} JARs and the Royal Road contract")
 
 

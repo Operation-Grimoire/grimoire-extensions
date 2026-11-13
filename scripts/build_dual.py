@@ -33,7 +33,7 @@ def validate(jar: Path, apk: Path, aapt2: Path, expected: dict[str, str]) -> dic
     for key, header in pairs.items():
         if attrs.get(header) != expected[key]:
             raise ValueError(f"JAR {header} differs from extension.properties")
-    if attrs.get("Grimoire-Extension-Format") != "1" or attrs.get("Grimoire-Core-Api") != "1.3":
+    if attrs.get("Grimoire-Extension-Format") != "1" or attrs.get("Grimoire-Core-Api") != "1.4":
         raise ValueError("Unsupported JAR format/core API")
     with zipfile.ZipFile(jar) as archive:
         classes = [name for name in archive.namelist() if name.endswith(".class")]

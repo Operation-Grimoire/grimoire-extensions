@@ -17,7 +17,7 @@ import io.grimoire.api.source.web.PaginatedSource
 import io.grimoire.api.util.richDescription
 import io.grimoire.api.util.richHtml
 import io.grimoire.api.network.CloudflareException
-import io.grimoire.api.network.NetworkContext
+import io.grimoire.api.network.SourceBrowser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -61,7 +61,7 @@ open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSourc
                 it.body?.string() ?: error("GalaxyNovels: empty response")
             }
         } catch (error: CloudflareException) {
-            if (NetworkContext.context == null) throw error
+            if (!SourceBrowser.ready) throw error
             browser.text(url, allowNotFound).also { needsBrowser = true }
         }
     }

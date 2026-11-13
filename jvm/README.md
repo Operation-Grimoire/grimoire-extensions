@@ -28,7 +28,7 @@ To build only the JVM target:
 ./gradlew -p jvm :royalroad:test :royalroad:jar --no-build-cache
 ```
 
-Android and JVM builds share the stable `1.3.0` API version from
+Android and JVM builds share the `1.4.1-SNAPSHOT` API version from
 `gradle/libs.versions.toml`. `extensionsCoreVersion` can override the JVM core for
 development. A local API checkout is optional: pass `--api` to the dual-build
 script or `-PgrimoireApiDir` to Gradle to substitute it for the published package.
@@ -44,13 +44,14 @@ uploaded only after a successful build.
 ## Format 1 metadata
 
 The JAR manifest declares `Grimoire-Extension-Format: 1`,
-`Grimoire-Core-Api: 1.3`, `Grimoire-Source-Package`, `Grimoire-Source-Class`,
+`Grimoire-Core-Api: 1.4`, `Grimoire-Source-Package`, `Grimoire-Source-Class`,
 `Grimoire-Version-Code`, `Grimoire-Version-Name` and
 `Grimoire-Source-Version-Code`. `Grimoire-Host-Libraries` identifies the required
 `org.json:json:20240303` JVM host dependency. Kotlin, OkHttp, Jsoup, coroutines and
 the core API also come from the host. The JAR bundles none of those libraries.
-This format currently admits portable sources only; a browser-dependent source
-must gain an explicit host browser capability before joining this build.
+GalaxyNovels asks the host to render a page through `SourceBrowser`. That source
+compiles in the portable JVM check. A desktop host still implements
+`SourceDocumentBrowser` before those pages render.
 
 `src/en/royalroad/extension.properties` mirrors the existing Android package,
 entry point and artifact versions. Keep it in step with Android build declarations
@@ -74,7 +75,8 @@ maintained JVM contract and packaging tools. A reusable Android CI harness is
 still needed. A successful APK build alone is not native parity.
 `artifacts.json` records that the packaging command does not run instrumentation.
 
-Only Royal Road is enabled. Shared extension bases containing Android code,
-browser capabilities, signed JAR distribution/trust, release indexes, reusable
-`extensions-ci` integration and publication remain later work. See
-[local validation](validation.md) for the completed proof.
+Only Royal Road has a verified APK/JAR contract. The `portable` module compiles
+the shared library plus WebNovel, Azure Chronicles, Z-Library, and GalaxyNovels
+against the host cookie and document-browser interfaces. Signed JAR distribution,
+release indexes, reusable `extensions-ci` integration, and publication remain
+later work. See [local validation](validation.md) for the completed Royal Road proof.

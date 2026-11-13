@@ -33,7 +33,7 @@ val extensionJar = tasks.named<Jar>("jar") {
     isReproducibleFileOrder = true
     manifest.attributes(
         "Grimoire-Extension-Format" to "1",
-        "Grimoire-Core-Api" to "1.3",
+        "Grimoire-Core-Api" to apiVersion.get().removeSuffix("-SNAPSHOT").split(".").take(2).joinToString("."),
         "Grimoire-Source-Package" to metadata.getProperty("package"),
         "Grimoire-Source-Class" to metadata.getProperty("sourceClass"),
         "Grimoire-Version-Code" to metadata.getProperty("versionCode"),

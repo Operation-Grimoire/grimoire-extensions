@@ -1,6 +1,5 @@
 package io.grimoire.extensions.lib.theme
 
-import android.webkit.CookieManager
 import io.grimoire.api.model.novel.Chapter
 import io.grimoire.api.model.novel.Novel
 import io.grimoire.api.model.novel.NovelPage
@@ -10,6 +9,7 @@ import io.grimoire.api.source.feature.LatestSource
 import io.grimoire.api.source.feature.PopularSource
 import io.grimoire.api.source.feature.SearchSource
 import io.grimoire.api.source.feature.WebViewLoginSource
+import io.grimoire.api.network.SourceCookies
 import io.grimoire.api.source.http.HttpSource
 import io.grimoire.api.source.web.ChapterListSource
 import io.grimoire.api.source.web.PageListSource
@@ -243,17 +243,16 @@ abstract class PatreonSource :
     override val loginSuccessUrl: String get() = "$baseUrl/home"
 
     override suspend fun isLoggedIn(): Boolean = withContext(Dispatchers.IO) {
-        CookieManager.getInstance().getCookie(baseUrl).orEmpty()
+        SourceCookies.header(baseUrl)
             .split(';').map { it.trim() }
             .any { it.startsWith("session_id", ignoreCase = true) }
     }
 
     override suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        val cm = CookieManager.getInstance()
-        cm.getCookie(baseUrl).orEmpty()
+        SourceCookies.header(baseUrl)
             .split(';').map { it.substringBefore('=').trim() }.filter { it.isNotEmpty() }
-            .forEach { cm.setCookie(baseUrl, "$it=; Max-Age=0; Path=/") }
-        cm.flush()
+            .forEach { SourceCookies.set(baseUrl, "$it=; Max-Age=0; Path=/") }
+        SourceCookies.flush()
     }
 
     // --- Helpers --------------------------------------------------------------

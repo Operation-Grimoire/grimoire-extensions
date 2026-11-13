@@ -1,6 +1,5 @@
 package io.grimoire.extension.en.azurechronicles
 
-import android.webkit.CookieManager
 import io.grimoire.api.model.filter.Filter
 import io.grimoire.api.model.lang.Language
 import io.grimoire.api.model.novel.Chapter
@@ -14,6 +13,7 @@ import io.grimoire.api.source.feature.LatestSource
 import io.grimoire.api.source.feature.PopularSource
 import io.grimoire.api.source.feature.SearchSource
 import io.grimoire.api.source.feature.WebViewLoginSource
+import io.grimoire.api.network.SourceCookies
 import io.grimoire.api.source.http.HttpSource
 import io.grimoire.api.source.web.ChapterListSource
 import io.grimoire.api.source.web.PageListSource
@@ -410,17 +410,16 @@ class AzureChronicles :
     override val loginSuccessUrl: String = baseUrl
 
     override suspend fun isLoggedIn(): Boolean = withContext(Dispatchers.IO) {
-        CookieManager.getInstance().getCookie(baseUrl).orEmpty()
+        SourceCookies.header(baseUrl)
             .split(';').map { it.trim() }
             .any { it.startsWith("wordpress_logged_in", ignoreCase = true) }
     }
 
     override suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        val cm = CookieManager.getInstance()
-        cm.getCookie(baseUrl).orEmpty()
+        SourceCookies.header(baseUrl)
             .split(';').map { it.substringBefore('=').trim() }.filter { it.isNotEmpty() }
-            .forEach { cm.setCookie(baseUrl, "$it=; Max-Age=0; Path=/") }
-        cm.flush()
+            .forEach { SourceCookies.set(baseUrl, "$it=; Max-Age=0; Path=/") }
+        SourceCookies.flush()
     }
 
     // --- Helpers --------------------------------------------------------------

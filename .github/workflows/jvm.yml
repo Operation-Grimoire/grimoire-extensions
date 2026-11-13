@@ -34,7 +34,7 @@ jobs:
       - name: Build and test the published-core JVM extension
         run: |
           chmod +x gradlew
-          ./gradlew -p jvm :royalroad:test :royalroad:jar --no-daemon --stacktrace
+          ./gradlew -p jvm :royalroad:test :royalroad:jar :portable:compileKotlin --no-daemon --stacktrace
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

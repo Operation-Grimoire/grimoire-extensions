@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 def compare(android: dict, jvm_report: dict, artifacts: dict) -> None:
+    level = android.get("androidApiLevel")
+    if type(level) is not int or level <= 0:
+        raise ValueError("Android API level must be a positive integer")
     jvm = jvm_report["contract"]
     if android["contract"] != jvm:
         fields = sorted(key for key in android["contract"].keys() | jvm.keys()

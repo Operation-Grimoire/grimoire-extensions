@@ -1,4 +1,6 @@
 import copy
+import json
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -12,6 +14,43 @@ from compare_contracts import compare
 
 
 class ArtifactGatesTest(unittest.TestCase):
+    def test_pass_output_requires_runtime_level_and_complete_hash_evidence(self):
+        contract = {"sourceId": "123", "sourceClass": "fixture.Source", "sourceVersionCode": "2", "pagesSha256": "pageshash"}
+        native = {"contract": contract, "apkSha256": "apkhash", "apkPackage": "fixture", "apkVersionCode": 1,
+                  "apkVersionName": "1.0.0", "apkCoreApi": "1.5", "androidApiLevel": 35}
+        jvm = {"contract": contract, "jarSha256": "jarhash"}
+        artifacts = {"sourceId": "123", "jvmCoreApi": "1.5", "identity": {"package": "fixture", "versionCode": "1",
+                     "versionName": "1.0.0", "sourceClass": "fixture.Source", "sourceVersionCode": "2"},
+                     "artifacts": {"android": {"sha256": "apkhash"}, "jvm": {"sha256": "jarhash"}}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, level in enumerate((35, None, 0, -1, "35", True, "missing-pages")):
+                candidate = copy.deepcopy(native)
+                candidate["androidApiLevel"] = 35 if level == "missing-pages" else level
+                jvm_candidate = copy.deepcopy(jvm)
+                if level == "missing-pages":
+                    del candidate["contract"]["pagesSha256"]
+                    del jvm_candidate["contract"]["pagesSha256"]
+                paths = []
+                for name, value in (("native", candidate), ("jvm", jvm_candidate), ("artifacts", artifacts)):
+                    path = root / f"{name}.json"
+                    path.write_text(json.dumps(value), encoding="utf-8")
+                    paths.append(str(path))
+                output = root / f"result-{index}.json"
+                result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "compare_contracts.py"),
+                                         "--android", paths[0], "--jvm", paths[1], "--artifacts", paths[2],
+                                         "--output", str(output)], capture_output=True, text=True)
+                with self.subTest(level=level):
+                    if index == 0:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        report = json.loads(output.read_text(encoding="utf-8"))
+                        self.assertEqual(report["status"], "PASS")
+                        self.assertEqual(report["androidApiLevel"], 35)
+                        self.assertEqual(report["pagesSha256"], "pageshash")
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse(output.exists())
+
     def test_apk_requirement_must_exist_and_match_the_jar(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
                     "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
@@ -88,7 +127,7 @@ class ArtifactGatesTest(unittest.TestCase):
 
     def test_native_comparison_rejects_changed_content_stale_apk_and_wrong_identity(self):
         jvm = {"sourceId": "123", "sourceClass": "fixture.Source", "sourceVersionCode": "2", "pages": "text"}
-        native = {"contract": jvm, "apkSha256": "hash", "apkPackage": "fixture", "apkVersionCode": 1, "apkVersionName": "1.0.0", "apkCoreApi": "1.5"}
+        native = {"contract": jvm, "apkSha256": "hash", "apkPackage": "fixture", "apkVersionCode": 1, "apkVersionName": "1.0.0", "apkCoreApi": "1.5", "androidApiLevel": 35}
         artifacts = {"sourceId": "123", "identity": {"package": "fixture", "versionCode": "1", "versionName": "1.0.0",
                      "sourceClass": "fixture.Source", "sourceVersionCode": "2"}, "artifacts": {"android": {"sha256": "hash"}, "jvm": {"sha256": "jarhash"}}}
         artifacts["jvmCoreApi"] = "1.5"

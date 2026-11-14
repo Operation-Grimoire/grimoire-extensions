@@ -29,7 +29,7 @@ import java.text.Normalizer
 import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 5)
+@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 6)
 open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "GalaxyNovels"
     override val lang = Language.AR
@@ -54,16 +54,20 @@ open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSourc
     // Retain the shared cookie jar, User-Agent and normal HTTP transport.
     private suspend fun text(url: String, allowNotFound: Boolean = false): String {
         if (needsBrowser) return browser.text(url, allowNotFound)
-        return try {
+        val body = try {
             get(url).use {
                 if (allowNotFound && it.code == 404) return ""
+                // Some Galaxy edges deny OkHttp without marking a managed challenge.
+                if (it.code == 403 && SourceBrowser.ready) return@use null
                 check(it.isSuccessful) { "GalaxyNovels: HTTP ${it.code}; try opening the site in the app's WebView" }
                 it.body?.string() ?: error("GalaxyNovels: empty response")
             }
         } catch (error: CloudflareException) {
             if (!SourceBrowser.ready) throw error
-            browser.text(url, allowNotFound).also { needsBrowser = true }
+            null
         }
+        // Release the HTTP response first; a browser failure must not trigger a second read.
+        return body ?: browser.text(url, allowNotFound).also { needsBrowser = true }
     }
 
     private suspend fun document(url: String): Document = Jsoup.parse(text(url), url)

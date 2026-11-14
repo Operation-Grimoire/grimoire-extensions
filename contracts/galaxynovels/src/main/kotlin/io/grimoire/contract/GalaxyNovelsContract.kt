@@ -2,6 +2,7 @@ package io.grimoire.contract
 
 import io.grimoire.api.model.novel.NovelStatus
 import io.grimoire.api.model.novel.PageContent
+import io.grimoire.api.network.CloudflareBypassException
 import io.grimoire.api.network.CloudflareException
 import io.grimoire.api.network.SourceBrowserReading
 import io.grimoire.api.network.SourceDocumentBrowser
@@ -16,13 +17,27 @@ import io.grimoire.api.source.web.PageListSource
 import io.grimoire.api.source.web.PaginatedSource
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody
+import okio.Buffer
+import okio.ForwardingSource
+import okio.buffer
 import org.json.JSONObject
 import java.io.IOException
 import java.security.MessageDigest
 
 /** Synthetic browser observations, not an implementation of WebView or JCEF. No network is used. */
 object GalaxyNovelsFixtures : SourceDocumentBrowser {
-    enum class ResponseCase { CONTENT, REDIRECT, INVALID_JSON, HTTP_ERROR }
+    enum class ResponseCase { CONTENT, REDIRECT, INVALID_JSON, HTTP_ERROR, TIMEOUT }
+    enum class HttpCase(val status: Int?) { CHALLENGE(null), FORBIDDEN(403), UNAUTHORIZED(401), NOT_FOUND(404), THROTTLED(429), SERVER_ERROR(500) }
+
+    var httpCase = HttpCase.FORBIDDEN
+    var pendingHttpResponses = 0
+        private set
+    var closedHttpResponses = 0
+        private set
 
     override var ready = false
     var responseCase = ResponseCase.CONTENT
@@ -31,6 +46,9 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
     val decisions = mutableListOf<String>()
 
     fun reset() {
+        check(pendingHttpResponses == 0) { "Previous HTTP response was not closed" }
+        closedHttpResponses = 0
+        httpCase = HttpCase.FORBIDDEN
         ready = false
         responseCase = ResponseCase.CONTENT
         httpRequests.clear()
@@ -42,7 +60,26 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
         val url = chain.request().url
         check(url.isHttps && url.host == "galaxynovels.com") { "Unexpected fixture URL: $url" }
         httpRequests += url.toString()
-        throw CloudflareException(url.toString())
+        val status = httpCase.status ?: throw CloudflareException(url.toString())
+        pendingHttpResponses++
+        var closed = false
+        val body = "<html><title>Attention Required! | Cloudflare</title></html>"
+        val content = object : ForwardingSource(Buffer().writeUtf8(body)) {
+            override fun close() {
+                if (!closed) {
+                    closed = true
+                    pendingHttpResponses--
+                    closedHttpResponses++
+                }
+                super.close()
+            }
+        }.buffer()
+        Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(status).message("Fixture")
+            .body(object : ResponseBody() {
+                override fun contentType() = "text/html; charset=utf-8".toMediaType()
+                override fun contentLength() = body.toByteArray(Charsets.UTF_8).size.toLong()
+                override fun source() = content
+            }).build()
     }
 
     override suspend fun read(
@@ -52,10 +89,12 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
         decide: (SourceBrowserReading) -> SourceDocumentDecision,
     ): SourceBrowserReading {
         check(ready && timeoutMillis > 0)
+        check(pendingHttpResponses == 0) { "HTTP response must close before opening the browser" }
         val target = url.toHttpUrl()
         check(target.isHttps && target.host == "galaxynovels.com") { "Unexpected browser URL: $url" }
         check(script == extractionScript) { "Unexpected browser extraction protocol" }
         browserRequests += url
+        if (responseCase == ResponseCase.TIMEOUT) throw CloudflareBypassException(url)
 
         fun reading(status: Int, body: String, origin: String = url): SourceBrowserReading =
             SourceBrowserReading(url, status, JSONObject.quote(JSONObject().put("url", origin).put("body", body).toString()))
@@ -72,7 +111,7 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
             ResponseCase.REDIRECT -> reading(200, "<html><main class='wor-reader'>redirect</main></html>", "https://other.invalid/")
             ResponseCase.INVALID_JSON -> SourceBrowserReading(url, 200, "null")
             ResponseCase.HTTP_ERROR -> reading(500, "<html><main class='wor-reader'>error</main></html>")
-            ResponseCase.CONTENT -> null
+            ResponseCase.CONTENT, ResponseCase.TIMEOUT -> null
         }
         if (invalid != null) {
             val rejected = consider(invalid)
@@ -131,13 +170,15 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
 /** Runs unchanged from the packaged APK and JAR; production source code is never copied here. */
 object GalaxyNovelsContract {
     suspend fun run(source: Source): Map<String, String> {
+        checkFailureBoundaries(source)
         GalaxyNovelsFixtures.reset()
         val popularSource = source as PopularSource
         try {
             popularSource.getPopularNovels(1)
             error("A source without a ready browser must fail explicitly")
-        } catch (_: CloudflareException) {
-            check(GalaxyNovelsFixtures.browserRequests.isEmpty())
+        } catch (error: IllegalStateException) {
+            check(error.message.orEmpty().contains("HTTP 403"))
+            check(GalaxyNovelsFixtures.browserRequests.isEmpty() && GalaxyNovelsFixtures.pendingHttpResponses == 0)
         }
         GalaxyNovelsFixtures.ready = true
         val popular = popularSource.getPopularNovels(1)
@@ -163,7 +204,7 @@ object GalaxyNovelsContract {
         check(texts == listOf("رَنَّ الجرسُ.", "تَبِعَتْ ميرا النورَ."))
         check((pages.first().content as PageContent.Text).html!!.contains("<b>الجرسُ</b>"))
         check(texts.none { it.contains("UNRELATED") || it.contains("NAVIGATION") })
-        check(GalaxyNovelsFixtures.httpRequests.size == 2) { "Source did not retain its browser fallback" }
+        check(GalaxyNovelsFixtures.httpRequests.size == 2 && GalaxyNovelsFixtures.closedHttpResponses == 2) { "Source did not close and retain its browser fallback" }
 
         for (case in listOf(GalaxyNovelsFixtures.ResponseCase.REDIRECT, GalaxyNovelsFixtures.ResponseCase.INVALID_JSON,
             GalaxyNovelsFixtures.ResponseCase.HTTP_ERROR)) {
@@ -202,4 +243,50 @@ object GalaxyNovelsContract {
             "pagesSha256" to MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) },
         )
     }
+
+    private suspend fun checkFailureBoundaries(source: Source) {
+        fun fresh() = source.javaClass.getDeclaredConstructor().newInstance() as PopularSource
+        for (case in listOf(GalaxyNovelsFixtures.HttpCase.UNAUTHORIZED, GalaxyNovelsFixtures.HttpCase.THROTTLED,
+            GalaxyNovelsFixtures.HttpCase.SERVER_ERROR)) {
+            GalaxyNovelsFixtures.reset()
+            GalaxyNovelsFixtures.ready = true
+            GalaxyNovelsFixtures.httpCase = case
+            val error = failure { fresh().getPopularNovels(1) }
+            check(error is IllegalStateException && error.message.orEmpty().contains("HTTP ${case.status}"))
+            check(GalaxyNovelsFixtures.browserRequests.isEmpty() && GalaxyNovelsFixtures.closedHttpResponses == 1)
+        }
+        GalaxyNovelsFixtures.reset()
+        GalaxyNovelsFixtures.httpCase = GalaxyNovelsFixtures.HttpCase.NOT_FOUND
+        check(fresh().getPopularNovels(2).isEmpty())
+        check(GalaxyNovelsFixtures.browserRequests.isEmpty() && GalaxyNovelsFixtures.closedHttpResponses == 1)
+
+        GalaxyNovelsFixtures.reset()
+        GalaxyNovelsFixtures.httpCase = GalaxyNovelsFixtures.HttpCase.CHALLENGE
+        val challenged = fresh()
+        check(failure { challenged.getPopularNovels(1) } is CloudflareException)
+        check(GalaxyNovelsFixtures.browserRequests.isEmpty())
+        GalaxyNovelsFixtures.ready = true
+        check(challenged.getPopularNovels(1).size == 1)
+        check(GalaxyNovelsFixtures.httpRequests.size == 2 && GalaxyNovelsFixtures.browserRequests.size == 1)
+
+        for (case in listOf(GalaxyNovelsFixtures.ResponseCase.TIMEOUT, GalaxyNovelsFixtures.ResponseCase.HTTP_ERROR)) {
+            GalaxyNovelsFixtures.reset()
+            GalaxyNovelsFixtures.ready = true
+            GalaxyNovelsFixtures.responseCase = case
+            val denied = fresh()
+            val failure = failure { denied.getPopularNovels(1) }
+            check(failure is IOException) { "Plain 403 must reach the browser once: ${failure.javaClass.simpleName}: ${failure.message}" }
+            check(GalaxyNovelsFixtures.httpRequests.size == 1 && GalaxyNovelsFixtures.browserRequests.size == 1)
+            check(GalaxyNovelsFixtures.closedHttpResponses == 1)
+            GalaxyNovelsFixtures.responseCase = GalaxyNovelsFixtures.ResponseCase.CONTENT
+            check(denied.getPopularNovels(1).size == 1)
+            check(GalaxyNovelsFixtures.httpRequests.size == 2 && GalaxyNovelsFixtures.browserRequests.size == 2)
+        }
+    }
+
+    private suspend fun failure(block: suspend () -> Unit): Exception {
+        try { block() } catch (error: Exception) { return error }
+        error("Expected source failure")
+    }
+
 }

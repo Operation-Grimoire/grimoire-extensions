@@ -96,9 +96,12 @@ allows one platform per process. Every fixture HTTP request is intercepted
 before network access; unmatched hosts or paths fail.
 
 Galaxy's browser fixture supplies synthetic observations. It checks an unavailable
-browser before and after fallback, waiting through a challenge, accepting content
-and an allowed 404, retaining browser mode, and rejecting cross-origin, malformed
-and server-error responses. It also verifies that the source asks for its browser
+browser before and after fallback, plain HTTP 403 responses without a challenge
+header, response closure before browser reads, and a single browser attempt even
+on timeout. Other HTTP errors and allowed 404s retain their existing behavior.
+The fixture also checks waiting through a challenge, accepting content, retaining
+browser mode only after success, and rejecting cross-origin, malformed and
+server-error observations. It also verifies that the source asks for its browser
 extraction script. This fixture does not execute that JavaScript or render a page
 in WebView or JCEF. The PASS report labels it `synthetic source protocol`.
 

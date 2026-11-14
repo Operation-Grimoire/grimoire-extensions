@@ -1,6 +1,6 @@
 [versions]
 agp = "9.2.1"
-extensionsApi = "1.4.1-SNAPSHOT"
+extensionsApi = "1.5.0"
 junitJupiter = "5.10.2"
 junitPlatform = "1.10.2"
 orgJson = "20240303"

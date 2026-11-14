@@ -81,7 +81,9 @@ def validate_jar(jar: Path, expected: dict[str, str]) -> dict[str, str]:
     for key, header in pairs.items():
         if attrs.get(header) != expected[key]:
             raise ValueError(f"JAR {header} differs from the extension Android metadata")
-    if attrs.get("Grimoire-Extension-Format") != "1" or attrs.get("Grimoire-Core-Api") != "1.4":
+    catalog = (ROOT / "gradle/libs.versions.toml").read_text(encoding="utf-8")
+    core_api = _declaration(catalog, "extensionsApi", r'(?m)^extensionsApi\s*=\s*"(\d+\.\d+)\.\d+(?:-SNAPSHOT)?"', "version catalog")
+    if attrs.get("Grimoire-Extension-Format") != "1" or attrs.get("Grimoire-Core-Api") != core_api:
         raise ValueError("Unsupported JAR format/core API")
     with zipfile.ZipFile(jar) as archive:
         classes = [name for name in archive.namelist() if name.endswith(".class")]

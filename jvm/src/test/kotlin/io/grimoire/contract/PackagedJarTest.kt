@@ -29,7 +29,7 @@ class PackagedJarTest {
             jar.manifest.mainAttributes
         }
         assertEquals("1", attributes.getValue("Grimoire-Extension-Format"))
-        assertEquals("1.4", attributes.getValue("Grimoire-Core-Api"))
+        assertEquals("1.5", attributes.getValue("Grimoire-Core-Api"))
         listOf("package" to "Grimoire-Source-Package", "sourceClass" to "Grimoire-Source-Class",
             "versionCode" to "Grimoire-Version-Code", "versionName" to "Grimoire-Version-Name",
             "sourceVersionCode" to "Grimoire-Source-Version-Code").forEach { (key, header) ->

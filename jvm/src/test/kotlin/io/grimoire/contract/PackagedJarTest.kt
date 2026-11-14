@@ -14,9 +14,21 @@ import java.security.MessageDigest
 import kotlin.test.*
 
 class PackagedJarTest {
-    @Test fun `thin packaged extension loads with the host API and passes source contract`() = runBlocking {
-        val file = File(System.getProperty("extension.jar"))
-        val metadata = JSONObject(File(System.getProperty("extension.identity")).readText())
+    @Test fun `Royal Road packaged JAR passes its source contract`() = runBlocking {
+        contract("en-royalroad", RoyalRoadContract::run)
+    }
+
+    @Test fun `Galaxy packaged JAR passes its browser source contract`() = runBlocking {
+        contract("ar-galaxynovels", GalaxyNovelsContract::run)
+    }
+
+    private suspend fun contract(module: String, runContract: suspend (Source) -> Map<String, String>) {
+        val file = File(System.getProperty("extension.$module.jar"))
+        val metadata = JSONObject(File(System.getProperty("extension.$module.identity")).readText())
+        for (field in listOf("package", "sourceClass", "versionCode", "versionName", "sourceVersionCode")) {
+            val expected = requireNotNull(System.getProperty("extension.$module.expected.$field"))
+            assertEquals(expected, metadata.getString(field), "Current $module declarations: $field")
+        }
         val attributes = JarFile(file).use { jar ->
             val classes = jar.entries().toList().filter { it.name.endsWith(".class") }
             assertTrue(classes.isNotEmpty())
@@ -47,12 +59,12 @@ class PackagedJarTest {
             val type = loader.loadClass(attributes.getValue("Grimoire-Source-Class"))
             assertSame(loader, type.classLoader)
             val source = type.getDeclaredConstructor().newInstance() as Source
-            assertSame(defaultOkHttpClient(), (source as HttpSource).client)
+            assertSame(defaultOkHttpClient().cookieJar, (source as HttpSource).client.cookieJar)
             assertEquals(metadata.getString("sourceVersionCode").toInt(), type.getAnnotation(SourceInfo::class.java).versionCode)
-            val result = RoyalRoadContract.run(source)
+            val result = runContract(source)
             val report = JSONObject().put("contract", JSONObject(result))
                 .put("jarSha256", MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) })
-            File(System.getProperty("contract.result")).writeText(report.toString(2))
+            File(System.getProperty("extension.$module.result")).writeText(report.toString(2))
         }
     }
 }

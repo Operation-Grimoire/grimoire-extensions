@@ -8,7 +8,8 @@ import dalvik.system.DexClassLoader
 import io.grimoire.api.network.SourceNetwork
 import io.grimoire.api.source.Source
 import io.grimoire.contract.RoyalRoadContract
-import io.grimoire.contract.RoyalRoadContractPlatform
+import io.grimoire.contract.ParserContractPlatform
+import io.grimoire.contract.GalaxyNovelsContract
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -21,21 +22,31 @@ import java.security.MessageDigest
 /** Loads only the installed APK's parser; the host compiles the shared contract, not source implementations. */
 @RunWith(AndroidJUnit4::class)
 class PackagedApkTest {
-    @Suppress("DEPRECATION")
     @Test
-    fun installedApkRunsTheSharedParserContract() = runBlocking {
+    fun royalRoadApkRunsTheSharedParserContract() = runBlocking {
+        contract("en-royalroad", "io.grimoire.extension.en.royalroad", RoyalRoadContract::run)
+    }
+
+    @Test
+    fun galaxyApkRunsTheSharedBrowserSourceContract() = runBlocking {
+        contract("ar-galaxynovels", "io.grimoire.extension.ar.galaxynovels", GalaxyNovelsContract::run)
+    }
+
+    @Suppress("DEPRECATION")
+    private suspend fun contract(module: String, packageName: String, runContract: suspend (Source) -> Map<String, String>) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val pkg = context.packageManager.getPackageInfo("io.grimoire.extension.en.royalroad", PackageManager.GET_META_DATA)
+        val pkg = context.packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA)
         val app = requireNotNull(pkg.applicationInfo)
         val entry = requireNotNull(app.metaData.getString("grimoire.extension.class"))
         val minimumApi = app.metaData.getString("grimoire.extension.minApi")
         assertEquals(BuildConfig.HOST_CORE_API, minimumApi)
-        SourceNetwork.install(RoyalRoadContractPlatform())
+        SourceNetwork.install(platform)
         val loader = DexClassLoader(app.sourceDir, context.codeCacheDir.absolutePath, null, Source::class.java.classLoader)
         val type = loader.loadClass(entry)
         assertSame(loader, type.classLoader)
+        assertSame(Source::class.java.classLoader, loader.loadClass("io.grimoire.api.network.SourceBrowser").classLoader)
         val source = type.getDeclaredConstructor().newInstance() as Source
-        val contract = RoyalRoadContract.run(source)
+        val contract = runContract(source)
         val hash = MessageDigest.getInstance("SHA-256")
         File(app.sourceDir).inputStream().use { input ->
             val buffer = ByteArray(8192)
@@ -53,6 +64,10 @@ class PackagedApkTest {
             .put("apkCoreApi", minimumApi)
             .put("apkVersionCode", if (Build.VERSION.SDK_INT >= 28) pkg.longVersionCode else pkg.versionCode.toLong())
             .put("apkVersionName", pkg.versionName)
-        File(context.filesDir, "contract-android.json").writeText(report.toString(2))
+        File(context.filesDir, "contract-$module.json").writeText(report.toString(2))
+    }
+
+    private companion object {
+        val platform = ParserContractPlatform()
     }
 }

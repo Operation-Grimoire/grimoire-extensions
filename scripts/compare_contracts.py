@@ -46,6 +46,7 @@ def main() -> None:
             "apkSha256": android["apkSha256"], "jarSha256": jvm["jarSha256"],
             "minimumHostApi": android["apkCoreApi"],
             "androidApiLevel": android["androidApiLevel"],
+            "browserExecution": jvm["contract"].get("browserExecution", "not exercised"),
             "sourceId": jvm["contract"]["sourceId"],
             "pagesSha256": jvm["contract"]["pagesSha256"],
         }, indent=2) + "\n", encoding="utf-8")

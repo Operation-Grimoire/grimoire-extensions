@@ -25,6 +25,10 @@ class PackagedJarTest {
     private suspend fun contract(module: String, runContract: suspend (Source) -> Map<String, String>) {
         val file = File(System.getProperty("extension.$module.jar"))
         val metadata = JSONObject(File(System.getProperty("extension.$module.identity")).readText())
+        for (field in listOf("package", "sourceClass", "versionCode", "versionName", "sourceVersionCode")) {
+            val expected = requireNotNull(System.getProperty("extension.$module.expected.$field"))
+            assertEquals(expected, metadata.getString(field), "Current $module declarations: $field")
+        }
         val attributes = JarFile(file).use { jar ->
             val classes = jar.entries().toList().filter { it.name.endsWith(".class") }
             assertTrue(classes.isNotEmpty())

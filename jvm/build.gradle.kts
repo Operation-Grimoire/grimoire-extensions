@@ -207,6 +207,15 @@ tasks.named<Test>("test") {
         val identityFile = layout.buildDirectory.file("extensions/$module/identity.json")
         inputs.file(jarFile)
         inputs.file(identityFile)
+        // identityOf reads the current Android declarations; do not trust cached JSON alone.
+        for ((field, value) in listOf(
+            "package" to identity.packageName, "sourceClass" to identity.sourceClass,
+            "versionCode" to identity.versionCode, "versionName" to identity.versionName,
+            "sourceVersionCode" to identity.sourceVersionCode,
+        )) {
+            inputs.property("expectedIdentity.$module.$field", value)
+            systemProperty("extension.$module.expected.$field", value)
+        }
         outputs.file(layout.buildDirectory.file("extensions/$module/contract-jvm.json"))
         systemProperty("extension.$module.jar", jarFile.get().asFile.absolutePath)
         systemProperty("extension.$module.identity", identityFile.get().asFile.absolutePath)

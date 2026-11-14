@@ -29,7 +29,6 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
     val httpRequests = mutableListOf<String>()
     val browserRequests = mutableListOf<String>()
     val decisions = mutableListOf<String>()
-    private val scripts = mutableSetOf<String>()
 
     fun reset() {
         ready = false
@@ -37,7 +36,6 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
         httpRequests.clear()
         browserRequests.clear()
         decisions.clear()
-        scripts.clear()
     }
 
     val challenge = Interceptor { chain ->
@@ -56,9 +54,7 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
         check(ready && timeoutMillis > 0)
         val target = url.toHttpUrl()
         check(target.isHttps && target.host == "galaxynovels.com") { "Unexpected browser URL: $url" }
-        check(script.contains("location.href") && script.contains("document.documentElement.outerHTML"))
-        scripts += script
-        check(scripts.size == 1) { "Source changed its browser extraction script within a run" }
+        check(script == extractionScript) { "Unexpected browser extraction protocol" }
         browserRequests += url
 
         fun reading(status: Int, body: String, origin: String = url): SourceBrowserReading =
@@ -124,6 +120,10 @@ object GalaxyNovelsFixtures : SourceDocumentBrowser {
         }
         return 200 to body
     }
+
+    // Pin the requested serialization protocol; this fixture does not execute JavaScript.
+    private const val extractionScript =
+        "JSON.stringify({url:location.href,body:document.contentType.includes('json')?document.body.innerText:document.documentElement.outerHTML})"
 
     private const val card = "<h2><a href='/novel/fixture/'>رواية الفانوس</a></h2><img class='wor-cover-img' src='/cover.jpg'>"
 }

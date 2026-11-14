@@ -79,8 +79,9 @@ describe compatibility; signed JAR trust/distribution remains separate work.
 
 ## Runtime parity and remaining work
 
-The packaged JAR tests load Royal Road and GalaxyNovels with separate
-URLClassLoaders and the host API. Android loads each installed APK with its own
+The packaged JAR tests check generated identity against the current Android
+declarations supplied by Gradle before loading Royal Road and GalaxyNovels with
+separate URLClassLoaders and the host API. Android loads each installed APK with its own
 DexClassLoader. Each source runs one shared fixture contract on both targets;
 the test host compiles the fixtures, not the source implementations.
 
@@ -117,9 +118,11 @@ API level, page hash and browser evidence scope. The standalone dual-build
 command still records instrumentation as unexecuted because it does not run an
 emulator.
 
-To reproduce native parity, build both extensions and the test host:
+To reproduce native parity, first build the JARs and JVM reports, then both APKs
+and the test host:
 
 ```sh
+bash ./gradlew -p jvm test jars
 bash ./gradlew :en-royalroad:assembleDebug :ar-galaxynovels:assembleDebug \
   :parity-host:assembleDebug :parity-host:assembleDebugAndroidTest \
   -PincludeParityHost=true

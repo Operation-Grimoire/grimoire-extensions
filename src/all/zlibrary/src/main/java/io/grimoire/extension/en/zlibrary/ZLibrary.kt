@@ -58,7 +58,7 @@ import java.io.IOException
     name = "Z-Library",
     lang = Language.MULTI,
     baseUrl = "https://z-library.im",
-    versionCode = 33,
+    versionCode = 34,
 )
 class ZLibrary :
     HttpSource(),

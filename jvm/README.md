@@ -36,7 +36,7 @@ To build only the JVM target:
 The default command assembles every extension APK, builds every JAR, and checks that
 each pair names the same package, class, and version.
 
-Android and JVM builds share the `1.4.1-SNAPSHOT` API version from
+Android and JVM builds share the stable `1.5.0` API version from
 `gradle/libs.versions.toml`. `extensionsCoreVersion` can override the JVM core for
 development. A local API checkout is optional: pass `--api` to the dual-build
 script or `-PgrimoireApiDir` to Gradle to substitute it for the published package.
@@ -52,7 +52,7 @@ uploaded only after a successful build.
 ## Format 1 metadata
 
 The JAR manifest declares `Grimoire-Extension-Format: 1`,
-`Grimoire-Core-Api: 1.4`, `Grimoire-Source-Package`, `Grimoire-Source-Class`,
+`Grimoire-Core-Api: 1.5`, `Grimoire-Source-Package`, `Grimoire-Source-Class`,
 `Grimoire-Version-Code`, `Grimoire-Version-Name` and
 `Grimoire-Source-Version-Code`. `Grimoire-Host-Libraries` identifies the required
 `org.json:json:20240303` JVM host dependency. Kotlin, OkHttp, Jsoup, coroutines and

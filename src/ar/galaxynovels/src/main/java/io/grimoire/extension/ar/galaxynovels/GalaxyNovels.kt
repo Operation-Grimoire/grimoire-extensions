@@ -29,7 +29,7 @@ import java.text.Normalizer
 import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 3)
+@SourceInfo(name = "GalaxyNovels", lang = Language.AR, baseUrl = "https://galaxynovels.com", versionCode = 4)
 open class GalaxyNovels : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "GalaxyNovels"
     override val lang = Language.AR

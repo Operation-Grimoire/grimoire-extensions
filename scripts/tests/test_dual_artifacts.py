@@ -7,15 +7,39 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from build_dual import expected_identity, extension_dirs, source_identity, validate
+from build_dual import expected_identity, extension_dirs, source_identity, validate, validate_jar
 from compare_contracts import compare
 
 
 class ArtifactGatesTest(unittest.TestCase):
+    def test_jar_core_requirement_follows_the_shared_api_pin(self):
+        expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
+                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "gradle").mkdir()
+            catalog = root / "gradle/libs.versions.toml"
+            jar = root / "fixture.jar"
+            for pin in ("1.5.0", "1.5.1-SNAPSHOT"):
+                catalog.write_text(f'[versions]\nextensionsApi = "{pin}"\n', encoding="utf-8")
+                for requirement in ("1.4", "1.5", "9.0"):
+                    headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": requirement,
+                               "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
+                               "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
+                    with zipfile.ZipFile(jar, "w") as archive:
+                        archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
+                        archive.writestr(expected["sourceClass"].replace(".", "/") + ".class", bytes.fromhex("cafebabe00000037"))
+                    with self.subTest(pin=pin, requirement=requirement), patch("build_dual.ROOT", root):
+                        if requirement == "1.5":
+                            self.assertEqual(validate_jar(jar, expected)["Grimoire-Core-Api"], "1.5")
+                        else:
+                            with self.assertRaises(ValueError):
+                                validate_jar(jar, expected)
+
     def test_jar_rejects_api_bundling_and_incompatible_metadata_before_android_tools(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
                     "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
-        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.4",
+        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.5",
                    "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                    "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
         with tempfile.TemporaryDirectory() as directory:

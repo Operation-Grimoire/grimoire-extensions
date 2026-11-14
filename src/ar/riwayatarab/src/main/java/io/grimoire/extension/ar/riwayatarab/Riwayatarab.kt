@@ -30,7 +30,7 @@ import java.time.Instant
 
 @SourceInfo(
     name = "Riwayatarab", lang = Language.AR, baseUrl = "https://riwayatarab.com",
-    versionCode = 1, adultContent = AdultContent.PARTIAL,
+    versionCode = 2, adultContent = AdultContent.PARTIAL,
 )
 open class Riwayatarab : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "Riwayatarab"

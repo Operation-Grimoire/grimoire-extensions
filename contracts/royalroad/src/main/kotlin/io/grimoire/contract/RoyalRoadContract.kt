@@ -51,7 +51,7 @@ class RoyalRoadContractPlatform : SourceHttpPlatform {
     })
 }
 
-/** Exercises the real extension loaded from its JAR using the fixture responses above. */
+/** Exercises the real extension loaded from either package using the same fixture responses. */
 object RoyalRoadContract {
     suspend fun run(source: Source): Map<String, String> {
         val popular = (source as PopularSource).getPopularNovels(1)

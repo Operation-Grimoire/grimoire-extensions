@@ -25,7 +25,7 @@ import org.jsoup.nodes.Document
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "MTLArabic", lang = Language.AR, baseUrl = "https://mtlarabic.com", versionCode = 2)
+@SourceInfo(name = "MTLArabic", lang = Language.AR, baseUrl = "https://mtlarabic.com", versionCode = 3)
 open class MTLArabic : HttpSource(), PopularSource, LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "MTLArabic"
     override val lang = Language.AR

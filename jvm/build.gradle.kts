@@ -180,6 +180,7 @@ sourceSets.named("test").configure {
     runtimeClasspath += sourceSets.getByName(royalroad.first.module.sourceSetName()).output
 }
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("src/en/royalroad/src/test/java").asFile)
+kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/royalroad/src/main/kotlin").asFile)
 kotlin.target.compilations.getByName("test").associateWith(
     kotlin.target.compilations.getByName(royalroad.first.module.sourceSetName()),
 )

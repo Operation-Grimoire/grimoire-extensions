@@ -66,24 +66,52 @@ The JVM build reads each extension's `applicationId`, `versionCode`, and
 `versionName` from its Android `build.gradle.kts`, the entry point from
 `AndroidManifest.xml`, and the source `versionCode` from `@SourceInfo`. The
 artifact version and the annotation version stay independent. Royal Road keeps
-artifact versionCode 4 and annotation versionCode 5. Source ID uses the same
+artifact versionCode 5 and annotation versionCode 6. Source ID uses the same
 package hash on both targets.
+
+The Android shared library generates the `grimoire.extension.minApi` manifest
+value from the same catalog pin. It is a string resource containing `major.minor`,
+matching the JAR's `Grimoire-Core-Api`. The packaging verifier rejects missing or
+different APK/JAR requirements. Hosts require the same API major and a sufficient
+minor before executing extension code. The Android app retains legacy APKs with
+no declaration, while malformed declarations are rejected. These declarations
+describe compatibility; signed JAR trust/distribution remains separate work.
 
 ## Runtime parity and remaining work
 
 The packaged JAR test loads classes with a separate URLClassLoader and shares the
 host API. The common fixture contract covers browse/latest/search/details,
 chapter ordering/locks, rich content and hidden-text removal. Its result includes
-the exact JAR hash. The fixture lives in `jvm/src/test/kotlin` and is never packaged in extensions.
+the exact JAR hash. The fixture lives once in `contracts/royalroad/src/main/kotlin`
+and is never packaged in extensions.
 It supplies synthetic HTTP responses and expected results; the parser itself
 comes from `src/en/royalroad`.
 
-Native APK parity was validated with a local Android instrumentation harness
-that loads the APK with DexClassLoader and compares the same contract and
-artifact hashes. That prototype harness remains local; this change ships the
-maintained JVM contract and packaging tools. A reusable Android CI harness is
-still needed. A successful APK build alone is not native parity.
-`artifacts.json` records that the packaging command does not run instrumentation.
+The `JVM extension artifacts` workflow also builds Royal Road's APK and the
+opt-in `parity-host` Android test consumer. On a fresh API 35 emulator it loads
+the installed APK with DexClassLoader and runs that same contract. The host
+compiles the shared fixture, not the Royal Road implementation. The JVM test
+loads the packaged JAR through its own class loader.
+
+`prepare_parity.py` verifies package/class/version/API metadata and binds the JVM
+report to the actual JAR. `compare_contracts.py` then requires identical parser
+results, APK identity, API requirements, and both artifact hashes. CI rejects
+skipped tests and retains the native/JVM JSON, hashes, and result logs. It writes
+`parity-result.json` with `PASS` only after the exact comparison succeeds. A passing
+build alone does not establish native parity. The standalone dual-build command
+still records instrumentation as unexecuted because it does not run the emulator.
+
+To reproduce the native stage, build the opt-in host and Royal Road APK:
+
+```sh
+bash ./gradlew :en-royalroad:assembleDebug :parity-host:assembleDebug \
+  :parity-host:assembleDebugAndroidTest -PincludeParityHost=true
+```
+
+Follow the workflow's staging commands and run `bash .github/scripts/android-parity.sh`
+on a disposable emulator. This checks synthetic parser behavior only. Real-site
+networking, source login, browser challenges, and the production app's native
+browser/session checks remain separate acceptance evidence.
 
 Every extension under `src/<language>/<name>` gets a thin JAR from that same
 directory. Only Royal Road has the fixture contract on top of the identity check.

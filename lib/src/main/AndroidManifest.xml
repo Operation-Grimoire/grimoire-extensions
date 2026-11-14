@@ -1,2 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data android:name="grimoire.extension.minApi" android:value="@string/grimoire_extension_min_api" />
+    </application>
+</manifest>

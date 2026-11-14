@@ -43,7 +43,7 @@ import java.io.IOException
     name = "Azure Chronicles",
     lang = Language.EN,
     baseUrl = "https://azurechronicles.com",
-    versionCode = 12,
+    versionCode = 13,
     novelUpdatesGroups = ["Azure Chronicles"],
 )
 class AzureChronicles :

@@ -32,7 +32,7 @@ import java.net.URLEncoder
     name = "NovGo",
     lang = Language.EN,
     baseUrl = "https://novgo.net",
-    versionCode = 13,
+    versionCode = 14,
 )
 class NovGo :
     ParsedHttpSource(),

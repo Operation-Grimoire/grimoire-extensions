@@ -29,7 +29,7 @@ import org.jsoup.nodes.Element
     name = "Light Novels Translations",
     lang = Language.EN,
     baseUrl = "https://lightnovelstranslations.com",
-    versionCode = 13,
+    versionCode = 14,
     novelUpdatesGroups = ["Light Novels Translations"],
 )
 class LightNovelsTranslations :

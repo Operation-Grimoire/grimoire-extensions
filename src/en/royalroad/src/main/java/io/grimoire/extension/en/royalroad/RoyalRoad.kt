@@ -31,7 +31,7 @@ import java.time.Instant
     name = "Royal Road",
     lang = Language.EN,
     baseUrl = "https://www.royalroad.com",
-    versionCode = 5,
+    versionCode = 6,
     novelUpdatesGroups = ["Royal Road"],
 )
 class RoyalRoad :

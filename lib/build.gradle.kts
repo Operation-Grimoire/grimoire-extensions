@@ -22,7 +22,7 @@ android {
 
     defaultConfig {
         minSdk = 26
-        // One catalog pin drives the APK requirement and the JAR manifest.
+        // The APK requirement uses the catalog pin; the JAR uses it by default.
         resValue("string", "grimoire_extension_min_api", libs.versions.extensionsApi.get()
             .substringBefore('-').split('.').take(2).joinToString("."))
     }

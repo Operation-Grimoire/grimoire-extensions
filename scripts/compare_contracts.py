@@ -42,8 +42,9 @@ def main() -> None:
             "status": "PASS", "identity": artifacts["identity"],
             "apkSha256": android["apkSha256"], "jarSha256": jvm["jarSha256"],
             "minimumHostApi": android["apkCoreApi"],
+            "androidApiLevel": android["androidApiLevel"],
             "sourceId": jvm["contract"]["sourceId"],
-            "pagesSha256": jvm["contract"].get("pagesSha256"),
+            "pagesSha256": jvm["contract"]["pagesSha256"],
         }, indent=2) + "\n", encoding="utf-8")
     print("PASS: exact APK identity and Android/JVM source contract match")
 

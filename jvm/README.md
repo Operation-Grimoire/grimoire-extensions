@@ -95,8 +95,9 @@ loads the packaged JAR through its own class loader.
 
 `prepare_parity.py` verifies package/class/version/API metadata and binds the JVM
 report to the actual JAR. `compare_contracts.py` then requires identical parser
-results, APK identity, API requirements, and both artifact hashes. CI rejects
-skipped tests and retains the native/JVM JSON, hashes, and result logs. It writes
+results, APK identity, API requirements, and both artifact hashes. The native step
+requires exactly one passing instrumentation test and rejects skipped tests.
+CI retains the native/JVM JSON, Android API level, hashes, and result logs. It writes
 `parity-result.json` with `PASS` only after the exact comparison succeeds. A passing
 build alone does not establish native parity. The standalone dual-build command
 still records instrumentation as unexecuted because it does not run the emulator.

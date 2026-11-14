@@ -49,6 +49,7 @@ class PackagedApkTest {
             .put("contract", JSONObject(contract))
             .put("apkSha256", hash.digest().joinToString("") { "%02x".format(it) })
             .put("apkPackage", pkg.packageName)
+            .put("androidApiLevel", Build.VERSION.SDK_INT)
             .put("apkCoreApi", minimumApi)
             .put("apkVersionCode", if (Build.VERSION.SDK_INT >= 28) pkg.longVersionCode else pkg.versionCode.toLong())
             .put("apkVersionName", pkg.versionName)

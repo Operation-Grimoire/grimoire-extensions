@@ -17,7 +17,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("contracts/royalroad/src/main/kotlin"))
+    for (contract in listOf("royalroad", "galaxynovels", "shared")) {
+        sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("contracts/$contract/src/main/kotlin"))
+    }
 }
 
 dependencies {

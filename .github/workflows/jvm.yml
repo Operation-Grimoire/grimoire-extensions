@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  royalroad:
+  jvm:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -46,24 +46,26 @@ jobs:
           path: |
             jvm/build/extensions/**/*.jar
             jvm/build/extensions/**/identity.json
-            jvm/build/extensions/en-royalroad/contract-jvm.json
+            jvm/build/extensions/*/contract-jvm.json
             jvm/build/host/*.jar
           if-no-files-found: error
-      - name: Stage the exact Royal Road JVM input
+      - name: Stage the exact parser JVM inputs
         run: |
-          mkdir -p build/parity
-          python - <<'PY'
+          python - <<'PYTHON'
           import json, shutil
           from pathlib import Path
-          source = Path('jvm/build/extensions/en-royalroad')
-          identity = json.loads((source / 'identity.json').read_text())
-          jar = source / (identity['package'] + '-' + identity['versionName'] + '.jar')
-          shutil.copyfile(jar, 'build/parity/royalroad.jar')
-          shutil.copyfile(source / 'contract-jvm.json', 'build/parity/contract-jvm.json')
-          PY
+          for module in ('en-royalroad', 'ar-galaxynovels'):
+              source = Path('jvm/build/extensions') / module
+              target = Path('build/parity') / module
+              target.mkdir(parents=True, exist_ok=True)
+              identity = json.loads((source / 'identity.json').read_text())
+              jar = source / (identity['package'] + '-' + identity['versionName'] + '.jar')
+              shutil.copyfile(jar, target / 'extension.jar')
+              shutil.copyfile(source / 'contract-jvm.json', target / 'contract-jvm.json')
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
-          name: royalroad-jvm-parity
+          name: parser-jvm-parity
           path: build/parity/
           if-no-files-found: error
       - name: Upload test reports even when tests fail
@@ -77,7 +79,7 @@ jobs:
           if-no-files-found: ignore
 
   apk:
-    needs: royalroad
+    needs: jvm
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -97,21 +99,24 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - uses: actions/download-artifact@v4
         with:
-          name: royalroad-jvm-parity
+          name: parser-jvm-parity
           path: build/parity
-      - name: Build the APK and test-only native host
+      - name: Build both APKs and the test-only native host
         run: |
           chmod +x gradlew
-          ./gradlew :en-royalroad:assembleDebug :parity-host:assembleDebug :parity-host:assembleDebugAndroidTest -PincludeParityHost=true
-          cp src/en/royalroad/build/outputs/apk/debug/en-royalroad-debug.apk build/parity/royalroad.apk
+          ./gradlew :en-royalroad:assembleDebug :ar-galaxynovels:assembleDebug :parity-host:assembleDebug :parity-host:assembleDebugAndroidTest -PincludeParityHost=true
           cp parity-host/build/outputs/apk/debug/parity-host-debug.apk build/parity/host.apk
           cp parity-host/build/outputs/apk/androidTest/debug/parity-host-debug-androidTest.apk build/parity/tests.apk
-          python scripts/prepare_parity.py --jar build/parity/royalroad.jar --apk build/parity/royalroad.apk --jvm build/parity/contract-jvm.json --output build/parity/artifacts.json
+          for module in en-royalroad ar-galaxynovels; do
+            directory=${module/-//}
+            cp "src/$directory/build/outputs/apk/debug/$module-debug.apk" "build/parity/$module/extension.apk"
+            python scripts/prepare_parity.py --module "$module" --jar "build/parity/$module/extension.jar" --apk "build/parity/$module/extension.apk" --jvm "build/parity/$module/contract-jvm.json" --output "build/parity/$module/artifacts.json"
+          done
           cd build/parity
-          sha256sum *.apk royalroad.jar > sha256sums.txt
+          sha256sum host.apk tests.apk */extension.apk */extension.jar > sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: royalroad-parity-inputs
+          name: parser-parity-inputs
           path: build/parity/
           if-no-files-found: error
 
@@ -128,7 +133,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: royalroad-parity-inputs
+          name: parser-parity-inputs
           path: build/parity
       - name: Enable KVM
         run: |
@@ -145,9 +150,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: royalroad-native-parity-result
+          name: parser-native-parity-result
           path: |
-            build/parity/*.json
-            build/parity/*.log
+            build/parity/**/*.json
+            build/parity/**/*.log
+            build/parity/instrumentation.log
             build/parity/sha256sums.txt
           if-no-files-found: error

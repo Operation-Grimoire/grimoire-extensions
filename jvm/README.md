@@ -42,7 +42,7 @@ development. A local API checkout is optional: pass `--api` to the dual-build
 script or `-PgrimoireApiDir` to Gradle to substitute it for the published package.
 
 The JVM artifacts workflow runs the Python rejection gates, all Royal Road parser
-tests and the packaged-JAR contract on every PR and main push. It uses the
+tests and both packaged-JAR contracts on every PR and main push. It uses the
 published core, with no API checkout or composite, and uploads the JAR, contract
 snapshot and test XML. The JVM-only job needs no Android build. APK preview/release
 workflows remain separate; a passing JVM job is not Android/browser parity.
@@ -79,43 +79,66 @@ describe compatibility; signed JAR trust/distribution remains separate work.
 
 ## Runtime parity and remaining work
 
-The packaged JAR test loads classes with a separate URLClassLoader and shares the
-host API. The common fixture contract covers browse/latest/search/details,
-chapter ordering/locks, rich content and hidden-text removal. Its result includes
-the exact JAR hash. The fixture lives once in `contracts/royalroad/src/main/kotlin`
-and is never packaged in extensions.
-It supplies synthetic HTTP responses and expected results; the parser itself
-comes from `src/en/royalroad`.
+The packaged JAR tests load Royal Road and GalaxyNovels with separate
+URLClassLoaders and the host API. Android loads each installed APK with its own
+DexClassLoader. Each source runs one shared fixture contract on both targets;
+the test host compiles the fixtures, not the source implementations.
 
-The `JVM extension artifacts` workflow also builds Royal Road's APK and the
-opt-in `parity-host` Android test consumer. On a fresh API 35 emulator it loads
-the installed APK with DexClassLoader and runs that same contract. The host
-compiles the shared fixture, not the Royal Road implementation. The JVM test
-loads the packaged JAR through its own class loader.
+Royal Road covers browse/latest/search/details, chapter ordering/locks, rich
+content and hidden-text removal. Galaxy covers browse/latest/search/details,
+Arabic search normalization, paginated chapters, full chapter URL slugs, and
+Arabic prose/rich text with unrelated controls excluded.
 
-`prepare_parity.py` verifies package/class/version/API metadata and binds the JVM
-report to the actual JAR. `compare_contracts.py` then requires identical parser
-results, APK identity, API requirements, and both artifact hashes. The native step
-requires exactly one passing instrumentation test and rejects skipped tests.
-CI retains the native/JVM JSON, Android API level, hashes, and result logs. It writes
-`parity-result.json` with `PASS` only after the exact comparison succeeds. A passing
-build alone does not establish native parity. The standalone dual-build command
-still records instrumentation as unexecuted because it does not run the emulator.
+The fixtures live under `contracts/royalroad` and `contracts/galaxynovels`.
+`contracts/shared` provides one process-wide HTTP platform, because SourceNetwork
+allows one platform per process. Every fixture HTTP request is intercepted
+before network access; unmatched hosts or paths fail.
 
-To reproduce the native stage, build the opt-in host and Royal Road APK:
+Galaxy's browser fixture supplies synthetic observations. It checks an unavailable
+browser before and after fallback, waiting through a challenge, accepting content
+and an allowed 404, retaining browser mode, and rejecting cross-origin, malformed
+and server-error responses. It also verifies that the source asks for its browser
+extraction script. This fixture does not execute that JavaScript or render a page
+in WebView or JCEF. The PASS report labels it `synthetic source protocol`.
+
+The `JVM extension artifacts` workflow builds both JARs, both APKs and the opt-in
+`parity-host` Android consumer. A fresh API 35 emulator runs exactly two passing
+instrumentation tests. CI rejects ignored/assumption-failure statuses and retains
+both sources' reports and hashes. Detailed parser parity for the other sources
+is not established by their artifact identity checks.
+
+`prepare_parity.py --module <module>` verifies the selected source's
+package/class/version/API metadata and binds its JVM report to the actual JAR.
+Supported contract modules are `en-royalroad` (the default) and
+`ar-galaxynovels`. `compare_contracts.py` requires identical source results,
+identity, API requirements and both artifact hashes. A `parity-result.json` is
+written per module only after the comparison succeeds. It retains the Android
+API level, page hash and browser evidence scope. The standalone dual-build
+command still records instrumentation as unexecuted because it does not run an
+emulator.
+
+To reproduce native parity, build both extensions and the test host:
 
 ```sh
-bash ./gradlew :en-royalroad:assembleDebug :parity-host:assembleDebug \
-  :parity-host:assembleDebugAndroidTest -PincludeParityHost=true
+bash ./gradlew :en-royalroad:assembleDebug :ar-galaxynovels:assembleDebug \
+  :parity-host:assembleDebug :parity-host:assembleDebugAndroidTest \
+  -PincludeParityHost=true
 ```
 
-Follow the workflow's staging commands and run `bash .github/scripts/android-parity.sh`
-on a disposable emulator. This checks synthetic parser behavior only. Real-site
-networking, source login, browser challenges, and the production app's native
-browser/session checks remain separate acceptance evidence.
+Follow the workflow's staging commands, which place each source's exact inputs
+under `build/parity/<module>/`, then run
+`bash .github/scripts/android-parity.sh` on a disposable emulator.
 
-Every extension under `src/<language>/<name>` gets a thin JAR from that same
-directory. Only Royal Road has the fixture contract on top of the identity check.
-Signed JAR distribution,
-release indexes, reusable `extensions-ci` integration, and publication remain
-later work. See [local validation](validation.md) for the completed Royal Road proof.
+Synthetic parser/protocol checks remain separate from real-site networking,
+source login, browser challenges and faithful rendered text. Nightly beta
+`1.0.5-beta.339+93edd5a` could upgrade and persist its Beta channel, but Galaxy's
+live catalog returned HTTP 403 even after the public site opened in WebView.
+Chapter reading remained unexecuted; see
+[issue #138](https://github.com/Operation-Grimoire/grimoire-extensions/issues/138).
+The new offline contract does not close that live acceptance issue.
+
+Every extension under `src/<language>/<name>` still gets a thin JAR from that same
+directory. No Android/JVM parser forks or generated source copies are introduced.
+A maintained desktop host, real browser adapters, signed JAR distribution,
+release indexes, reusable `extensions-ci` integration and publication remain
+later work. See [local validation](validation.md) for the earlier Royal Road proof.

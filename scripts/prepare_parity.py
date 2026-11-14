@@ -1,4 +1,4 @@
-"""Verify the exact Royal Road APK/JAR pair before running native parser parity."""
+"""Verify an exact supported source APK/JAR pair before running native parser parity."""
 import argparse
 import hashlib
 import json
@@ -7,8 +7,11 @@ from pathlib import Path
 from build_dual import ROOT, find_aapt2, source_identity, validate
 
 
-def prepare(jar: Path, apk: Path, jvm_report: Path, output: Path) -> None:
-    expected = source_identity(ROOT / "src/en/royalroad")
+MODULES = {"en-royalroad": "en/royalroad", "ar-galaxynovels": "ar/galaxynovels"}
+
+
+def prepare(jar: Path, apk: Path, jvm_report: Path, output: Path, module: str = "en-royalroad") -> None:
+    expected = source_identity(ROOT / "src" / MODULES[module])
     attrs = validate(jar, apk, find_aapt2(None), expected)
     report = json.loads(jvm_report.read_text(encoding="utf-8"))
     jar_hash = hashlib.sha256(jar.read_bytes()).hexdigest()
@@ -33,12 +36,13 @@ def prepare(jar: Path, apk: Path, jvm_report: Path, output: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--module", choices=MODULES, default="en-royalroad")
     parser.add_argument("--jar", type=Path, required=True)
     parser.add_argument("--apk", type=Path, required=True)
     parser.add_argument("--jvm", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    prepare(args.jar, args.apk, args.jvm, args.output)
+    prepare(args.jar, args.apk, args.jvm, args.output, args.module)
     print("Verified exact APK/JAR identity, requirements, and JVM contract hash")
 
 

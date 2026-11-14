@@ -181,6 +181,8 @@ sourceSets.named("test").configure {
 }
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("src/en/royalroad/src/test/java").asFile)
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/royalroad/src/main/kotlin").asFile)
+kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/galaxynovels/src/main/kotlin").asFile)
+kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/shared/src/main/kotlin").asFile)
 kotlin.target.compilations.getByName("test").associateWith(
     kotlin.target.compilations.getByName(royalroad.first.module.sourceSetName()),
 )
@@ -198,17 +200,16 @@ tasks.named<Jar>("jar") { enabled = false }
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
-    dependsOn(royalroad.second)
-    val identity = royalroad.first
-    val jarFile = layout.buildDirectory.file("extensions/${identity.module}/${identity.packageName}-${identity.versionName}.jar")
-    val identityFile = layout.buildDirectory.file("extensions/${identity.module}/identity.json")
-    inputs.file(jarFile)
-    inputs.file(identityFile)
-    outputs.file(layout.buildDirectory.file("extensions/${identity.module}/contract-jvm.json"))
-    systemProperty("extension.jar", jarFile.map { it.asFile.absolutePath }.get())
-    systemProperty("extension.identity", identityFile.map { it.asFile.absolutePath }.get())
-    systemProperty(
-        "contract.result",
-        layout.buildDirectory.file("extensions/${identity.module}/contract-jvm.json").get().asFile.absolutePath,
-    )
+    for ((identity, jarTask) in extensionJars.filter { it.first.module in setOf("en-royalroad", "ar-galaxynovels") }) {
+        dependsOn(jarTask)
+        val module = identity.module
+        val jarFile = layout.buildDirectory.file("extensions/$module/${identity.packageName}-${identity.versionName}.jar")
+        val identityFile = layout.buildDirectory.file("extensions/$module/identity.json")
+        inputs.file(jarFile)
+        inputs.file(identityFile)
+        outputs.file(layout.buildDirectory.file("extensions/$module/contract-jvm.json"))
+        systemProperty("extension.$module.jar", jarFile.get().asFile.absolutePath)
+        systemProperty("extension.$module.identity", identityFile.get().asFile.absolutePath)
+        systemProperty("extension.$module.result", layout.buildDirectory.file("extensions/$module/contract-jvm.json").get().asFile.absolutePath)
+    }
 }

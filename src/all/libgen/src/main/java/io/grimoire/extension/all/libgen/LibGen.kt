@@ -40,7 +40,7 @@ import java.io.IOException
     name = "Library Genesis",
     lang = Language.MULTI,
     baseUrl = "https://libgen.la",
-    versionCode = 8,
+    versionCode = 9,
 )
 class LibGen :
     HttpSource(),

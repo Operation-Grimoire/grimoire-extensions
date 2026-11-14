@@ -1,4 +1,6 @@
 import copy
+import json
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -12,6 +14,68 @@ from compare_contracts import compare
 
 
 class ArtifactGatesTest(unittest.TestCase):
+    def test_pass_output_requires_runtime_level_and_complete_hash_evidence(self):
+        contract = {"sourceId": "123", "sourceClass": "fixture.Source", "sourceVersionCode": "2", "pagesSha256": "pageshash"}
+        native = {"contract": contract, "apkSha256": "apkhash", "apkPackage": "fixture", "apkVersionCode": 1,
+                  "apkVersionName": "1.0.0", "apkCoreApi": "1.5", "androidApiLevel": 35}
+        jvm = {"contract": contract, "jarSha256": "jarhash"}
+        artifacts = {"sourceId": "123", "jvmCoreApi": "1.5", "identity": {"package": "fixture", "versionCode": "1",
+                     "versionName": "1.0.0", "sourceClass": "fixture.Source", "sourceVersionCode": "2"},
+                     "artifacts": {"android": {"sha256": "apkhash"}, "jvm": {"sha256": "jarhash"}}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, level in enumerate((35, None, 0, -1, "35", True, "missing-pages")):
+                candidate = copy.deepcopy(native)
+                candidate["androidApiLevel"] = 35 if level == "missing-pages" else level
+                jvm_candidate = copy.deepcopy(jvm)
+                if level == "missing-pages":
+                    del candidate["contract"]["pagesSha256"]
+                    del jvm_candidate["contract"]["pagesSha256"]
+                paths = []
+                for name, value in (("native", candidate), ("jvm", jvm_candidate), ("artifacts", artifacts)):
+                    path = root / f"{name}.json"
+                    path.write_text(json.dumps(value), encoding="utf-8")
+                    paths.append(str(path))
+                output = root / f"result-{index}.json"
+                result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "compare_contracts.py"),
+                                         "--android", paths[0], "--jvm", paths[1], "--artifacts", paths[2],
+                                         "--output", str(output)], capture_output=True, text=True)
+                with self.subTest(level=level):
+                    if index == 0:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        report = json.loads(output.read_text(encoding="utf-8"))
+                        self.assertEqual(report["status"], "PASS")
+                        self.assertEqual(report["androidApiLevel"], 35)
+                        self.assertEqual(report["pagesSha256"], "pageshash")
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse(output.exists())
+
+    def test_apk_requirement_must_exist_and_match_the_jar(self):
+        expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
+                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
+        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.5",
+                   "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
+                   "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
+        with tempfile.TemporaryDirectory() as directory:
+            jar = Path(directory) / "fixture.jar"
+            with zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
+                archive.writestr(expected["sourceClass"].replace(".", "/") + ".class", bytes.fromhex("cafebabe00000037"))
+            badging = "package: name='io.grimoire.extension.fixture' versionCode='1' versionName='1.0.0'"
+            entry = 'A: android:name="grimoire.extension.class"\n  A: android:value="io.grimoire.extension.fixture.Fixture"\n'
+            requirement = 'A: android:name="grimoire.extension.minApi"\n  A: android:value=@0x7f090000\n'
+            for tree, resource in ((entry, "1.5"), (entry + requirement, "1.4"), (entry + requirement, "1.5")):
+                resources = f'resource 0x7f090000 string/grimoire_extension_min_api\n  () "{resource}"\n'
+                with self.subTest(declared=bool(requirement in tree), api=resource), patch(
+                    "build_dual.subprocess.check_output", side_effect=[badging, tree, resources],
+                ):
+                    if tree == entry + requirement and resource == "1.5":
+                        self.assertEqual(validate(jar, Path("fixture.apk"), Path("aapt2"), expected)["Grimoire-Core-Api"], "1.5")
+                    else:
+                        with self.assertRaises(ValueError):
+                            validate(jar, Path("fixture.apk"), Path("aapt2"), expected)
+
     def test_jar_core_requirement_follows_the_shared_api_pin(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
                     "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
@@ -63,12 +127,13 @@ class ArtifactGatesTest(unittest.TestCase):
 
     def test_native_comparison_rejects_changed_content_stale_apk_and_wrong_identity(self):
         jvm = {"sourceId": "123", "sourceClass": "fixture.Source", "sourceVersionCode": "2", "pages": "text"}
-        native = {"contract": jvm, "apkSha256": "hash", "apkPackage": "fixture", "apkVersionCode": 1, "apkVersionName": "1.0.0"}
+        native = {"contract": jvm, "apkSha256": "hash", "apkPackage": "fixture", "apkVersionCode": 1, "apkVersionName": "1.0.0", "apkCoreApi": "1.5", "androidApiLevel": 35}
         artifacts = {"sourceId": "123", "identity": {"package": "fixture", "versionCode": "1", "versionName": "1.0.0",
                      "sourceClass": "fixture.Source", "sourceVersionCode": "2"}, "artifacts": {"android": {"sha256": "hash"}, "jvm": {"sha256": "jarhash"}}}
+        artifacts["jvmCoreApi"] = "1.5"
         jvm_report = {"contract": jvm, "jarSha256": "jarhash"}
         compare(native, jvm_report, artifacts)
-        for field in ("pages", "apkSha256", "apkPackage", "apkVersionCode", "apkVersionName"):
+        for field in ("pages", "apkSha256", "apkPackage", "apkVersionCode", "apkVersionName", "apkCoreApi"):
             changed = copy.deepcopy(native)
             if field == "pages":
                 changed["contract"][field] = "other content"
@@ -136,9 +201,9 @@ class SourceIdentityTest(unittest.TestCase):
         identity = source_identity(Path(__file__).resolve().parents[2] / "src" / "en" / "royalroad")
         self.assertEqual(identity["package"], "io.grimoire.extension.en.royalroad")
         self.assertEqual(identity["sourceClass"], "io.grimoire.extension.en.royalroad.RoyalRoad")
-        self.assertEqual(identity["versionCode"], "4")
-        self.assertEqual(identity["versionName"], "1.0.3")
-        self.assertEqual(identity["sourceVersionCode"], "5")
+        self.assertEqual(identity["versionCode"], "5")
+        self.assertEqual(identity["versionName"], "1.0.4")
+        self.assertEqual(identity["sourceVersionCode"], "6")
 
     def test_every_extension_declares_a_readable_identity(self):
         directories = extension_dirs()

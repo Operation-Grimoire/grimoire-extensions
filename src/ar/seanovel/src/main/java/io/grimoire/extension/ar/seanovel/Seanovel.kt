@@ -28,7 +28,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "Seanovel", lang = Language.AR, baseUrl = "https://seanovel.org", versionCode = 3)
+@SourceInfo(name = "Seanovel", lang = Language.AR, baseUrl = "https://seanovel.org", versionCode = 4)
 open class Seanovel : HttpSource(), LatestSource, SearchSource, PaginatedSource, PageListSource {
     override val name = "Seanovel"
     override val lang = Language.AR

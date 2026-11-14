@@ -26,7 +26,7 @@ import org.jsoup.nodes.Document
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
-@SourceInfo(name = "AzoraFly", lang = Language.AR, baseUrl = "https://azorafly.com", versionCode = 3)
+@SourceInfo(name = "AzoraFly", lang = Language.AR, baseUrl = "https://azorafly.com", versionCode = 4)
 open class AzoraFly : HttpSource(), PopularSource, LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "AzoraFly"
     override val lang = Language.AR

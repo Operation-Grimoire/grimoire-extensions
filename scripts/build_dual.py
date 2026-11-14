@@ -107,6 +107,22 @@ def validate(jar: Path, apk: Path, aapt2: Path, expected: dict[str, str]) -> dic
     if not re.search(r':name[^\n]*"grimoire.extension.class"[^\n]*\n\s*A: [^\n]*:value[^\n]*"' +
                      re.escape(expected["sourceClass"]) + r'"', tree):
         raise ValueError("APK source entry point differs from JAR identity")
+    requirement = re.search(r':name[^\n]*"grimoire.extension.minApi"[^\n]*\n\s*A: [^\n]*:value[^\n]*=@(0x[0-9a-fA-F]+)', tree)
+    if not requirement:
+        raise ValueError("APK must declare its minimum host API as a string resource")
+    resources = subprocess.check_output([str(aapt2), "dump", "resources", str(apk)], text=True, encoding="utf-8")
+    block, selected = [], False
+    for line in resources.splitlines():
+        if re.match(r"\s*resource ", line):
+            if selected:
+                break
+            selected = bool(re.match(r"\s*resource " + re.escape(requirement.group(1)) +
+                                     r" string/grimoire_extension_min_api(?:\s|$)", line))
+        elif selected:
+            block.append(line)
+    values = re.findall(r'^\s*\(\)\s+"([^"]+)"\s*$', "\n".join(block), re.MULTILINE)
+    if values != [attrs["Grimoire-Core-Api"]]:
+        raise ValueError("APK minimum host API differs from the JAR requirement")
     return attrs
 
 

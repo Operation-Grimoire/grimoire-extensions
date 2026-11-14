@@ -30,7 +30,7 @@ import java.text.Normalizer
 import java.util.ArrayDeque
 
 /** Golden is currently branded Dilar. Catalog search may be in read-only maintenance. */
-@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 4)
+@SourceInfo(name = "Golden", lang = Language.AR, baseUrl = "https://golden.rest", versionCode = 5)
 open class Golden : HttpSource(), LatestSource, SearchSource, ChapterListSource, PageListSource {
     override val name = "Golden"
     override val lang = Language.AR

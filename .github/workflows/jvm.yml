@@ -17,6 +17,7 @@ concurrency:
 jobs:
   royalroad:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +49,23 @@ jobs:
             jvm/build/extensions/en-royalroad/contract-jvm.json
             jvm/build/host/*.jar
           if-no-files-found: error
+      - name: Stage the exact Royal Road JVM input
+        run: |
+          mkdir -p build/parity
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          source = Path('jvm/build/extensions/en-royalroad')
+          identity = json.loads((source / 'identity.json').read_text())
+          jar = source / (identity['package'] + '-' + identity['versionName'] + '.jar')
+          shutil.copyfile(jar, 'build/parity/royalroad.jar')
+          shutil.copyfile(source / 'contract-jvm.json', 'build/parity/contract-jvm.json')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: royalroad-jvm-parity
+          path: build/parity/
+          if-no-files-found: error
       - name: Upload test reports even when tests fail
         if: always()
         uses: actions/upload-artifact@v4
@@ -57,3 +75,79 @@ jobs:
             jvm/build/test-results/test/*.xml
             jvm/build/reports/tests/test/
           if-no-files-found: ignore
+
+  apk:
+    needs: royalroad
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: royalroad-jvm-parity
+          path: build/parity
+      - name: Build the APK and test-only native host
+        run: |
+          chmod +x gradlew
+          ./gradlew :en-royalroad:assembleDebug :parity-host:assembleDebug :parity-host:assembleDebugAndroidTest -PincludeParityHost=true
+          cp src/en/royalroad/build/outputs/apk/debug/en-royalroad-debug.apk build/parity/royalroad.apk
+          cp parity-host/build/outputs/apk/debug/parity-host-debug.apk build/parity/host.apk
+          cp parity-host/build/outputs/apk/androidTest/debug/parity-host-debug-androidTest.apk build/parity/tests.apk
+          python scripts/prepare_parity.py --jar build/parity/royalroad.jar --apk build/parity/royalroad.apk --jvm build/parity/contract-jvm.json --output build/parity/artifacts.json
+          cd build/parity
+          sha256sum *.apk royalroad.jar > sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: royalroad-parity-inputs
+          path: build/parity/
+          if-no-files-found: error
+
+  android-parity:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: royalroad-parity-inputs
+          path: build/parity
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash .github/scripts/android-parity.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: royalroad-native-parity-result
+          path: |
+            build/parity/*.json
+            build/parity/*.log
+            build/parity/sha256sums.txt
+          if-no-files-found: error

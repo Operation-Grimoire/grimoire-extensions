@@ -29,7 +29,7 @@ import org.jsoup.Jsoup
  * api.rewayat.club. Novel and chapter URLs mirror the site's own routes
  * (`/novel/{slug}`, `/novel/{slug}/{number}`) so they open in a browser.
  */
-@SourceInfo(name = "Rewayat Club", lang = Language.AR, baseUrl = "https://rewayat.club", versionCode = 2)
+@SourceInfo(name = "Rewayat Club", lang = Language.AR, baseUrl = "https://rewayat.club", versionCode = 3)
 class RewayatClub :
     HttpSource(),
     PopularSource,

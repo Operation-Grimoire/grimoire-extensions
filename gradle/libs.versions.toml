@@ -4,8 +4,12 @@ extensionsApi = "1.5.0"
 junitJupiter = "5.10.2"
 junitPlatform = "1.10.2"
 orgJson = "20240303"
+androidxTestRunner = "1.6.2"
+androidxTestJunit = "1.2.1"
 
 [libraries]
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidxTestJunit" }
 grimoire-extensions-api = { group = "io.grimoire", name = "extensions-api", version.ref = "extensionsApi" }
 junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junitJupiter" }
 junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher", version.ref = "junitPlatform" }

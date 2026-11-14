@@ -45,7 +45,7 @@ import java.util.Locale
     name = "Novels Paradise",
     lang = Language.AR,
     baseUrl = "https://novelsparadise.site",
-    versionCode = 1,
+    versionCode = 2,
     adultContent = AdultContent.PARTIAL,
 )
 class NovelsParadise :

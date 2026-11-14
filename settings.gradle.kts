@@ -36,6 +36,11 @@ providers.gradleProperty("grimoireApiDir").orNull?.let {
 
 include(":lib")
 
+// Test-only Android consumer; never part of extension discovery or publication.
+if (providers.gradleProperty("includeParityHost").orNull == "true") {
+    include(":parity-host")
+}
+
 // Auto-include all extensions from src/{lang}/{name}/
 // Module names: :en-novelfull, :zh-xxx, etc.
 File(rootDir, "src")

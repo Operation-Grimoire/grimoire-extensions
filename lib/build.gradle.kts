@@ -18,9 +18,13 @@ val publishVersion: String =
 android {
     namespace = "io.grimoire.extensions.lib"
     compileSdk = 36
+    buildFeatures { resValues = true }
 
     defaultConfig {
         minSdk = 26
+        // The APK requirement uses the catalog pin; the JAR uses it by default.
+        resValue("string", "grimoire_extension_min_api", libs.versions.extensionsApi.get()
+            .substringBefore('-').split('.').take(2).joinToString("."))
     }
 
     compileOptions {

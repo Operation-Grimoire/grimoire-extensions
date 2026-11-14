@@ -29,7 +29,7 @@ import org.jsoup.nodes.Element
  * - chapter bodies interleave decoy copies of their own paragraphs, hidden
  *   by randomly named classes declared in an inline stylesheet.
  */
-@SourceInfo(name = "Kol Novel", lang = Language.AR, baseUrl = "https://kolnovel.com", versionCode = 2)
+@SourceInfo(name = "Kol Novel", lang = Language.AR, baseUrl = "https://kolnovel.com", versionCode = 3)
 class KolNovel :
     ParsedHttpSource(),
     PopularSource,

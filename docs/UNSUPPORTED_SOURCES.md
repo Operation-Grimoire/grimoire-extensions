@@ -14,6 +14,8 @@ Reasons fall into a few buckets:
   tracked for a future batch rather than a one-off.
 - **Blocked / paywalled** — requests time out, loop, or the content is behind a
   paid membership.
+- **Redirects / duplicate** — domain redirects to another site that is already
+  covered by an existing source.
 
 | Language | Source | URL | Reason not added |
 |----------|--------|-----|------------------|
@@ -21,3 +23,4 @@ Reasons fall into a few buckets:
 | ar | Markaz Riwayat | https://markazriwayat.com | Blocked/paywalled — listing requests time out |
 | ar | realmnovel | https://www.realmnovel.com | Web is a display-only front end: chapters 1–50 per novel; the rest are app-only (private mobile API) — #79 |
 | ar | sunovels | https://sunovels.com | Custom platform — bespoke site, no shared theme |
+| en | AllNovel | https://allnovel.org | Redirects / duplicate — HTTP 302 redirects to https://novelfull.com, already covered by NovelFull |

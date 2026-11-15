@@ -207,7 +207,7 @@ class SourceIdentityTest(unittest.TestCase):
 
     def test_every_extension_declares_a_readable_identity(self):
         directories = extension_dirs()
-        self.assertGreaterEqual(len(directories), 26)
+        self.assertGreaterEqual(len(directories), 25)
         for directory in directories:
             identity = source_identity(directory)
             with self.subTest(module=f"{directory.parent.name}-{directory.name}"):

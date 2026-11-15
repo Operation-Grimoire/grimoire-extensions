@@ -21,3 +21,4 @@ Reasons fall into a few buckets:
 | ar | Markaz Riwayat | https://markazriwayat.com | Blocked/paywalled — listing requests time out |
 | ar | realmnovel | https://www.realmnovel.com | Web is a display-only front end: chapters 1–50 per novel; the rest are app-only (private mobile API) — #79 |
 | ar | sunovels | https://sunovels.com | Custom platform — bespoke site, no shared theme |
+| en | AllNovel | https://allnovel.org | Redirects (302) to https://novelfull.com, which is already covered by NovelFull |

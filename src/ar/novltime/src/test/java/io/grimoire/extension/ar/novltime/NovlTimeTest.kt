@@ -24,6 +24,7 @@ class NovlTimeTest {
     private val book = Novel("https://novltime.com/ar/novel/book", "Book", Language.AR)
 
     private fun source(code: (Request) -> Int = { 200 }, response: (Request) -> String): NovlTime = object : NovlTime() {
+        override val retryDelayMs = 0L
         override val client = OkHttpClient.Builder().addInterceptor { chain ->
             Response.Builder().request(chain.request()).code(code(chain.request())).message("test").protocol(Protocol.HTTP_1_1)
                 .body(response(chain.request()).toResponseBody()).build()
@@ -131,11 +132,16 @@ class NovlTimeTest {
                 else -> error("Unexpected request: ${request.url}")
             }
         }
-        val chapters = source.getChapterList(book)
+        val first = source.getChapterList(book, null)
+        assertEquals("next", first.nextCursor)
+        val second = source.getChapterList(book, first.nextCursor)
+        val chapters = first.chapters + second.chapters
         assertEquals(listOf(1.5f, 2f), chapters.map { it.chapterNumber })
         assertEquals("https://novltime.com/ar/novel/book/chapter/chapter-1.5", chapters.first().url)
         assertEquals(Instant.parse("2026-11-06T12:00:00Z").toEpochMilli(), chapters.first().uploadDate)
         assertTrue(chapters.last().locked)
+        assertEquals(null, second.nextCursor)
+        assertEquals(1, requests.count { it.url.encodedPath == "/api/v1/novels/book" })
         assertEquals(listOf(null, "next"), requests.drop(1).map { it.url.queryParameter("cursor") })
         assertEquals(listOf("1", null), requests.drop(1).map { it.url.queryParameter("page") })
         assertTrue(requests.drop(1).all { it.url.queryParameter("limit") == "200" && it.url.queryParameter("sort") == "asc" })
@@ -151,7 +157,7 @@ class NovlTimeTest {
                 JSONObject().put("success", true).put("data", record("book")).toString()
             }
         }
-        assertThrows(IllegalStateException::class.java) { runBlocking { source.getChapterList(book) } }
+        assertThrows(IllegalStateException::class.java) { runBlocking { source.getChapterList(book, null) } }
     }
 
     @Test
@@ -166,6 +172,36 @@ class NovlTimeTest {
         assertEquals("الأول <b>مهم</b>", text.html)
         assertEquals("https://novltime.com/uploads/image.webp", (pages.last().content as PageContent.Image).url)
         assertEquals(listOf(0, 1), pages.map { it.index })
+    }
+
+    @Test
+    fun `top-level images remain in chapter order`() {
+        val document = Jsoup.parse("""<div class="chapter-body">
+            <img src="/first.webp"><p>النص</p><img src="/last.webp"></div>""", book.url)
+        val pages = NovlTime().parsePages(document)
+        assertEquals(listOf("https://novltime.com/first.webp", "النص", "https://novltime.com/last.webp"), pages.map {
+            when (val content = it.content) {
+                is PageContent.Image -> content.url
+                is PageContent.Text -> content.text
+                else -> error("unexpected content")
+            }
+        })
+    }
+
+    @Test
+    fun `inline images retain DOM order and formatting on both sides`() {
+        val document = Jsoup.parse("""<div class="chapter-body"><p>
+            قبل <b>نص قبل<img src="/inline.webp">نص بعد</b> بعد
+            </p></div>""", book.url)
+        val pages = NovlTime().parsePages(document)
+        assertEquals(3, pages.size)
+        val before = pages[0].content as PageContent.Text
+        val after = pages[2].content as PageContent.Text
+        assertEquals("قبل نص قبل", before.text)
+        assertEquals("قبل <b>نص قبل</b>", before.html)
+        assertEquals("https://novltime.com/inline.webp", (pages[1].content as PageContent.Image).url)
+        assertEquals("نص بعد بعد", after.text)
+        assertEquals("<b>نص بعد</b> بعد", after.html)
     }
 
     @Test

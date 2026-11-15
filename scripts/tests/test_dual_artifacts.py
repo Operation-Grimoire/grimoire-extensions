@@ -54,7 +54,7 @@ class ArtifactGatesTest(unittest.TestCase):
     def test_apk_requirement_must_exist_and_match_the_jar(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
                     "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
-        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.5",
+        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.6",
                    "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                    "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
         with tempfile.TemporaryDirectory() as directory:
@@ -65,13 +65,13 @@ class ArtifactGatesTest(unittest.TestCase):
             badging = "package: name='io.grimoire.extension.fixture' versionCode='1' versionName='1.0.0'"
             entry = 'A: android:name="grimoire.extension.class"\n  A: android:value="io.grimoire.extension.fixture.Fixture"\n'
             requirement = 'A: android:name="grimoire.extension.minApi"\n  A: android:value=@0x7f090000\n'
-            for tree, resource in ((entry, "1.5"), (entry + requirement, "1.4"), (entry + requirement, "1.5")):
+            for tree, resource in ((entry, "1.6"), (entry + requirement, "1.4"), (entry + requirement, "1.6")):
                 resources = f'resource 0x7f090000 string/grimoire_extension_min_api\n  () "{resource}"\n'
                 with self.subTest(declared=bool(requirement in tree), api=resource), patch(
                     "build_dual.subprocess.check_output", side_effect=[badging, tree, resources],
                 ):
-                    if tree == entry + requirement and resource == "1.5":
-                        self.assertEqual(validate(jar, Path("fixture.apk"), Path("aapt2"), expected)["Grimoire-Core-Api"], "1.5")
+                    if tree == entry + requirement and resource == "1.6":
+                        self.assertEqual(validate(jar, Path("fixture.apk"), Path("aapt2"), expected)["Grimoire-Core-Api"], "1.6")
                     else:
                         with self.assertRaises(ValueError):
                             validate(jar, Path("fixture.apk"), Path("aapt2"), expected)

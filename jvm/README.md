@@ -36,8 +36,8 @@ To build only the JVM target:
 The default command assembles every extension APK, builds every JAR, and checks that
 each pair names the same package, class, and version.
 
-Android and JVM builds currently share the development `1.6.0-SNAPSHOT` API
-version from `gradle/libs.versions.toml`. `extensionsCoreVersion` can override the JVM core for
+Android and JVM builds share the stable `1.6.0` API version from
+`gradle/libs.versions.toml`. `extensionsCoreVersion` can override the JVM core for
 development. A local API checkout is optional: pass `--api` to the dual-build
 script or `-PgrimoireApiDir` to Gradle to substitute it for the published package.
 

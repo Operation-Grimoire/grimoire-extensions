@@ -39,7 +39,7 @@ class PackagedApkTest {
         val app = requireNotNull(pkg.applicationInfo)
         val entry = requireNotNull(app.metaData.getString("grimoire.extension.class"))
         val minimumApi = app.metaData.getString("grimoire.extension.minApi")
-        assertEquals(BuildConfig.HOST_CORE_API, minimumApi)
+        assertEquals(BuildConfig.FIXTURE_CORE_API, minimumApi)
         SourceNetwork.install(platform)
         val loader = DexClassLoader(app.sourceDir, context.codeCacheDir.absolutePath, null, Source::class.java.classLoader)
         val type = loader.loadClass(entry)

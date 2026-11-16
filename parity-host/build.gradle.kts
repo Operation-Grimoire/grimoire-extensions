@@ -1,5 +1,10 @@
 plugins { alias(libs.plugins.android.application) }
 
+val fixtureCoreApi = Regex("""val minimumApi\s*=\s*"([^"]+)"""")
+    .find(rootProject.file("lib/build.gradle.kts").readText())
+    ?.groupValues?.get(1)
+    ?: error("Could not read the fixture minimum API from lib/build.gradle.kts")
+
 android {
     namespace = "io.grimoire.extensions.parity"
     compileSdk = 36
@@ -11,7 +16,7 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "HOST_CORE_API", "\"${libs.versions.extensionsApi.get().substringBefore('-').split('.').take(2).joinToString(".")}\"")
+        buildConfigField("String", "FIXTURE_CORE_API", "\"$fixtureCoreApi\"")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

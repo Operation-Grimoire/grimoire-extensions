@@ -51,6 +51,8 @@ def source_identity(directory: Path) -> dict[str, str]:
     default_api = _declaration(library_gradle, "minimumApi", r'val minimumApi\s*=\s*"([^"]+)"', "shared library")
     override = re.search(r'val minimumApi\s*=\s*"([^"]+)"', gradle)
     core_api = override.group(1) if override else default_api
+    if re.fullmatch(r"\d+\.\d+", core_api) is None:
+        raise ValueError(f"{name} minimumApi must be <major.minor>, got {core_api}")
     manifest = (directory / "src/main/AndroidManifest.xml").read_text(encoding="utf-8")
     source_class = _declaration(
         manifest, "grimoire.extension.class",

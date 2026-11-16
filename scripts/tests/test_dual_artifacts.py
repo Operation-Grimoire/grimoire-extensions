@@ -206,6 +206,19 @@ class SourceIdentityTest(unittest.TestCase):
         identity = source_identity(Path(__file__).resolve().parents[2] / "src" / "ar" / "novltime")
         self.assertEqual(identity["coreApi"], "1.6")
 
+    def test_invalid_minimum_api_format_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "lib").mkdir()
+            (root / "lib/build.gradle.kts").write_text('val minimumApi = "1.5"\n', encoding="utf-8")
+            extension = root / "fixture"
+            extension.mkdir()
+            self._write_extension(extension)
+            with (extension / "build.gradle.kts").open("a", encoding="utf-8") as gradle:
+                gradle.write('\nval minimumApi = "1.6.0"\n')
+            with patch("build_dual.ROOT", root), self.assertRaisesRegex(ValueError, "minimumApi.*major.minor"):
+                source_identity(extension)
+
     def test_every_extension_declares_a_readable_identity(self):
         directories = extension_dirs()
         self.assertGreaterEqual(len(directories), 25)

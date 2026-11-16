@@ -23,12 +23,28 @@ import java.time.Instant
 class NovlTimeTest {
     private val book = Novel("https://novltime.com/ar/novel/book", "Book", Language.AR)
 
-    private fun source(code: (Request) -> Int = { 200 }, response: (Request) -> String): NovlTime = object : NovlTime() {
+    private fun source(
+        code: (Request) -> Int = { 200 },
+        afterCatalogPage: suspend NovlTime.(Int) -> Unit = {},
+        response: (Request) -> String,
+    ): NovlTime = object : NovlTime() {
         override val retryDelayMs = 0L
         override val client = OkHttpClient.Builder().addInterceptor { chain ->
             Response.Builder().request(chain.request()).code(code(chain.request())).message("test").protocol(Protocol.HTTP_1_1)
                 .body(response(chain.request()).toResponseBody()).build()
         }.build()
+
+        override suspend fun fetchCatalog(
+            key: String,
+            sort: String,
+            query: String?,
+            page: Int,
+            cursor: String?,
+        ): CatalogPage {
+            val result = super.fetchCatalog(key, sort, query, page, cursor)
+            afterCatalogPage(page)
+            return result
+        }
     }
 
     private fun record(slug: String) = JSONObject().put("id", "id-$slug").put("slug", slug).put("title", "عنوان $slug")
@@ -85,6 +101,40 @@ class NovlTimeTest {
         assertEquals(listOf(null, "a", "b"), cursors)
         source.getPopularNovels(3)
         assertEquals(listOf(null, "a", "b", "b"), cursors)
+    }
+
+    @Test
+    fun `a catalog refresh cannot invalidate an in-flight cursor chain`() = runBlocking {
+        val cursors = mutableListOf<String?>()
+        lateinit var source: NovlTime
+        source = source(
+            response = { request ->
+                cursors += request.url.queryParameter("cursor")
+                when (request.url.queryParameter("cursor")) {
+                    null -> catalog(record("one"), next = "a")
+                    "a" -> catalog(record("two"), next = "b")
+                    else -> catalog(record("three"))
+                }.toString()
+            },
+            afterCatalogPage = { page -> if (page == 2) getPopularNovels(1) },
+        )
+
+        assertEquals(listOf("three"), source.getPopularNovels(3).map { it.url.substringAfterLast('/') })
+        assertEquals(listOf(null, "a", null, "b"), cursors)
+    }
+
+    @Test
+    fun `catalog cursor cache evicts old searches beyond its limit`() = runBlocking {
+        val source = source { request ->
+            catalog(record(requireNotNull(request.url.queryParameter("q")))).toString()
+        }
+        repeat(40) { source.searchNovels("query-$it", 1, emptyList()) }
+        val field = NovlTime::class.java.getDeclaredField("catalogCursors")
+        field.isAccessible = true
+        val cache = field.get(source) as Map<*, *>
+        assertEquals(32, cache.size)
+        assertTrue("popular\u0000query-0" !in cache)
+        assertTrue("popular\u0000query-39" in cache)
     }
 
     @Test

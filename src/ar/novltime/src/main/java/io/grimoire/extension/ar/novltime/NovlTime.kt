@@ -33,7 +33,7 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import java.time.Instant
 
-@SourceInfo(name = "NovlTime", lang = Language.AR, baseUrl = "https://novltime.com", versionCode = 2)
+@SourceInfo(name = "NovlTime", lang = Language.AR, baseUrl = "https://novltime.com", versionCode = 3)
 open class NovlTime : HttpSource(), PopularSource, LatestSource, SearchSource, CursorPaginatedSource, PageListSource {
     override val name = "NovlTime"
     override val lang = Language.AR
@@ -41,13 +41,18 @@ open class NovlTime : HttpSource(), PopularSource, LatestSource, SearchSource, C
 
     private val api = "$baseUrl/api/v1".toHttpUrl()
     private val cursorMutex = Mutex()
-    private val catalogCursors = mutableMapOf<String, MutableMap<Int, Cursor>>()
+    private val catalogCursors = object : java.util.LinkedHashMap<String, MutableMap<Int, Cursor>>(
+        MAX_CATALOG_CACHE_SIZE, 0.75f, true,
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MutableMap<Int, Cursor>>): Boolean =
+            size > MAX_CATALOG_CACHE_SIZE
+    }
     private val novelIdMutex = Mutex()
     private val novelIds = mutableMapOf<String, String>()
     protected open val retryDelayMs: Long = RETRY_DELAY_MS
 
     private class Cursor(val value: String?)
-    private data class CatalogPage(val novels: List<Novel>, val hasMore: Boolean)
+    internal data class CatalogPage(val novels: List<Novel>, val hasMore: Boolean, val nextCursor: String?)
 
     private suspend fun getWithRetries(url: String): Response {
         for (attempt in 0 until MAX_ATTEMPTS) {
@@ -89,23 +94,20 @@ open class NovlTime : HttpSource(), PopularSource, LatestSource, SearchSource, C
         val key = "$sort\u0000${query.orEmpty()}"
         val known = cursorMutex.withLock { catalogCursors[key]?.toMap().orEmpty() }
         val firstPage = known.keys.filter { it <= page }.maxOrNull() ?: 1
-        val firstCursor = known[firstPage]?.value
-        if (firstPage > 1 && firstCursor == null) return@withContext emptyList()
+        var cursor = known[firstPage]?.value
+        if (firstPage > 1 && cursor == null) return@withContext emptyList()
         var result: CatalogPage? = null
         for (currentPage in firstPage..page) {
-            val cursor = if (currentPage == firstPage) {
-                firstCursor
-            } else {
-                cursorMutex.withLock { catalogCursors[key]?.get(currentPage)?.value }
-            }
             if (cursor == null && currentPage > 1) return@withContext emptyList()
-            result = fetchCatalog(key, sort, query, currentPage, cursor)
-            if (currentPage < page && !result.hasMore) return@withContext emptyList()
+            val pageResult = fetchCatalog(key, sort, query, currentPage, cursor)
+            result = pageResult
+            if (currentPage < page && !pageResult.hasMore) return@withContext emptyList()
+            cursor = pageResult.nextCursor
         }
         result!!.novels
     }
 
-    private suspend fun fetchCatalog(
+    internal open suspend fun fetchCatalog(
         key: String,
         sort: String,
         query: String?,
@@ -142,7 +144,7 @@ open class NovlTime : HttpSource(), PopularSource, LatestSource, SearchSource, C
             pages.keys.removeAll { it > page + 1 }
             pages[page + 1] = Cursor(nextCursor)
         }
-        return CatalogPage(entries.objects().map(::novel), hasMore)
+        return CatalogPage(entries.objects().map(::novel), hasMore, nextCursor)
     }
 
     override suspend fun getNovelDetails(novel: Novel): Novel = withContext(Dispatchers.IO) {
@@ -325,6 +327,7 @@ open class NovlTime : HttpSource(), PopularSource, LatestSource, SearchSource, C
 
     private companion object {
         const val CATALOG_PAGE_SIZE = 20
+        const val MAX_CATALOG_CACHE_SIZE = 32
         const val CHAPTER_PAGE_SIZE = 200
         const val MAX_ATTEMPTS = 5
         const val RETRY_DELAY_MS = 500L

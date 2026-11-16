@@ -24,6 +24,7 @@ android {
         minSdk = 26
         // Extensions using a newer API override this default compatibility floor.
         val minimumApi = "1.5"
+        require(minimumApi.matches(Regex("""\d+\.\d+"""))) { "minimumApi must be <major.minor>, got $minimumApi" }
         resValue("string", "grimoire_extension_min_api", minimumApi)
     }
 

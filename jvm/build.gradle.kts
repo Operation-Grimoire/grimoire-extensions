@@ -19,9 +19,11 @@ java {
 
 val apiVersion = providers.gradleProperty("extensionsCoreVersion").orElse(libs.versions.extensionsApi)
 val repo = rootProject.layout.projectDirectory.dir("..")
+val minimumApiFormat = Regex("""\d+\.\d+""")
 val defaultMinimumApi = Regex("""val minimumApi\s*=\s*"([^"]+)"""")
     .find(repo.file("lib/build.gradle.kts").asFile.readText())
     ?.groupValues?.get(1)
+    ?.also { require(minimumApiFormat.matches(it)) { "lib minimumApi must be <major.minor>, got $it" } }
     ?: error("Could not read the default minimum API from lib/build.gradle.kts")
 val libVersion = System.getenv("LIB_RELEASE_TAG")
     ?.trim()
@@ -72,7 +74,9 @@ fun identityOf(dir: File): ExtensionIdentity {
     val versionCode = pull("versionCode", """versionCode\s*=\s*(\d+)""")
     val versionName = pull("versionName", """versionName\s*=\s*"([^"]+)"""")
     val minimumApi = Regex("""val minimumApi\s*=\s*"([^"]+)"""")
-        .find(gradle)?.groupValues?.get(1) ?: defaultMinimumApi
+        .find(gradle)?.groupValues?.get(1)
+        ?.also { require(minimumApiFormat.matches(it)) { "$module minimumApi must be <major.minor>, got $it" } }
+        ?: defaultMinimumApi
     val manifest = dir.resolve("src/main/AndroidManifest.xml").readText()
     val sourceClass = Regex("""android:name="grimoire\.extension\.class"[\s\S]*?android:value="([^"]+)"""")
         .find(manifest)?.groupValues?.get(1)

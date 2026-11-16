@@ -11,9 +11,10 @@ android {
         applicationId = "io.grimoire.extension.ar.novltime"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
         val minimumApi = "1.6"
+        require(minimumApi.matches(Regex("""\d+\.\d+"""))) { "minimumApi must be <major.minor>, got $minimumApi" }
         resValue("string", "grimoire_extension_min_api", minimumApi)
     }
 

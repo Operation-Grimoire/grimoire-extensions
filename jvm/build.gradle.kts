@@ -18,10 +18,11 @@ java {
 }
 
 val apiVersion = providers.gradleProperty("extensionsCoreVersion").orElse(libs.versions.extensionsApi)
-val coreApi = apiVersion.map { version ->
-    version.removeSuffix("-SNAPSHOT").split(".").take(2).joinToString(".")
-}
 val repo = rootProject.layout.projectDirectory.dir("..")
+val defaultMinimumApi = Regex("""val minimumApi\s*=\s*"([^"]+)"""")
+    .find(repo.file("lib/build.gradle.kts").asFile.readText())
+    ?.groupValues?.get(1)
+    ?: error("Could not read the default minimum API from lib/build.gradle.kts")
 val libVersion = System.getenv("LIB_RELEASE_TAG")
     ?.trim()
     ?.removePrefix("lib-v")
@@ -58,6 +59,7 @@ data class ExtensionIdentity(
     val versionCode: String,
     val versionName: String,
     val sourceVersionCode: String,
+    val coreApi: String,
     val hostLibraries: String,
 )
 
@@ -69,6 +71,8 @@ fun identityOf(dir: File): ExtensionIdentity {
     val packageName = pull("applicationId", """applicationId\s*=\s*"([^"]+)"""")
     val versionCode = pull("versionCode", """versionCode\s*=\s*(\d+)""")
     val versionName = pull("versionName", """versionName\s*=\s*"([^"]+)"""")
+    val minimumApi = Regex("""val minimumApi\s*=\s*"([^"]+)"""")
+        .find(gradle)?.groupValues?.get(1) ?: defaultMinimumApi
     val manifest = dir.resolve("src/main/AndroidManifest.xml").readText()
     val sourceClass = Regex("""android:name="grimoire\.extension\.class"[\s\S]*?android:value="([^"]+)"""")
         .find(manifest)?.groupValues?.get(1)
@@ -92,7 +96,7 @@ fun identityOf(dir: File): ExtensionIdentity {
     if (joined.contains("io.grimoire.extensions.lib")) libraries += "io.grimoire:extensions-lib:$libVersion"
     return ExtensionIdentity(
         module, dir, packageName, sourceClass, versionCode, versionName, sourceVersionCode,
-        libraries.joinToString(","),
+        minimumApi, libraries.joinToString(","),
     )
 }
 
@@ -143,7 +147,7 @@ val extensionJars = extensionDirs.map { dir ->
         isReproducibleFileOrder = true
         manifest.attributes(
             "Grimoire-Extension-Format" to "1",
-            "Grimoire-Core-Api" to coreApi.get(),
+            "Grimoire-Core-Api" to identity.coreApi,
             "Grimoire-Source-Package" to identity.packageName,
             "Grimoire-Source-Class" to identity.sourceClass,
             "Grimoire-Version-Code" to identity.versionCode,
@@ -159,6 +163,7 @@ val extensionJars = extensionDirs.map { dir ->
                 "versionCode" to identity.versionCode,
                 "versionName" to identity.versionName,
                 "sourceVersionCode" to identity.sourceVersionCode,
+                "coreApi" to identity.coreApi,
                 "hostLibraries" to identity.hostLibraries,
             ).joinToString(",\n", "{\n", "\n}\n") { (key, value) -> "  ${jsonQuote(key)}: ${jsonQuote(value)}" }
             identityFile.get().asFile.writeText(json)
@@ -200,7 +205,7 @@ tasks.named<Jar>("jar") { enabled = false }
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
-    for ((identity, jarTask) in extensionJars.filter { it.first.module in setOf("en-royalroad", "ar-galaxynovels") }) {
+    for ((identity, jarTask) in extensionJars.filter { it.first.module in setOf("en-royalroad", "ar-galaxynovels", "ar-novltime") }) {
         dependsOn(jarTask)
         val module = identity.module
         val jarFile = layout.buildDirectory.file("extensions/$module/${identity.packageName}-${identity.versionName}.jar")
@@ -211,7 +216,7 @@ tasks.named<Test>("test") {
         for ((field, value) in listOf(
             "package" to identity.packageName, "sourceClass" to identity.sourceClass,
             "versionCode" to identity.versionCode, "versionName" to identity.versionName,
-            "sourceVersionCode" to identity.sourceVersionCode,
+            "sourceVersionCode" to identity.sourceVersionCode, "coreApi" to identity.coreApi,
         )) {
             inputs.property("expectedIdentity.$module.$field", value)
             systemProperty("extension.$module.expected.$field", value)

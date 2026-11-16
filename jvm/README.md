@@ -9,7 +9,7 @@ by the host process.
 
 Use JDK 21, Python 3 and Android SDK 36 with build-tools. Set `ANDROID_HOME` and
 GitHub Packages credentials (`GITHUB_ACTOR`, `GITHUB_TOKEN` with package-read access).
-The normal build consumes the published API/core release:
+The normal build consumes the configured published API/core version:
 
 ```sh
 python scripts/build_dual.py
@@ -52,7 +52,7 @@ uploaded only after a successful build.
 ## Format 1 metadata
 
 The JAR manifest declares `Grimoire-Extension-Format: 1`,
-`Grimoire-Core-Api: 1.6`, `Grimoire-Source-Package`, `Grimoire-Source-Class`,
+`Grimoire-Core-Api: <major.minor>`, `Grimoire-Source-Package`, `Grimoire-Source-Class`,
 `Grimoire-Version-Code`, `Grimoire-Version-Name` and
 `Grimoire-Source-Version-Code`. `Grimoire-Host-Libraries` identifies the required
 `org.json:json:20240303` JVM host dependency. Kotlin, OkHttp, Jsoup, coroutines and
@@ -70,12 +70,15 @@ artifact versionCode 5 and annotation versionCode 6. Source ID uses the same
 package hash on both targets.
 
 The Android shared library generates the `grimoire.extension.minApi` manifest
-value from the same catalog pin. It is a string resource containing `major.minor`,
-matching the JAR's `Grimoire-Core-Api`. The packaging verifier rejects missing or
-different APK/JAR requirements. Hosts require the same API major and a sufficient
-minor before executing extension code. The Android app retains legacy APKs with
-no declaration, while malformed declarations are rejected. These declarations
-describe compatibility; signed JAR trust/distribution remains separate work.
+value from its `minimumApi` compatibility floor (currently 1.5), independently of
+the newer compile-time catalog pin. An extension using a newer API sets
+`minimumApi` in `defaultConfig` and overrides that string resource; NovlTime
+requires 1.6. The JVM build reads the same declaration for `Grimoire-Core-Api`.
+The packaging verifier rejects missing or different APK/JAR requirements. Hosts
+require the same API major and a sufficient minor before executing extension code.
+The Android app retains legacy APKs with no declaration, while malformed
+declarations are rejected. These declarations describe compatibility; signed JAR
+trust/distribution remains separate work.
 
 ## Runtime parity and remaining work
 

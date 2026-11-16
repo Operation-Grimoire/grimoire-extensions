@@ -5,6 +5,7 @@ plugins {
 android {
     namespace = "io.grimoire.extension.ar.novltime"
     compileSdk = 36
+    buildFeatures { resValues = true }
 
     defaultConfig {
         applicationId = "io.grimoire.extension.ar.novltime"
@@ -12,6 +13,8 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "1.0.1"
+        val minimumApi = "1.6"
+        resValue("string", "grimoire_extension_min_api", minimumApi)
     }
 
     compileOptions {

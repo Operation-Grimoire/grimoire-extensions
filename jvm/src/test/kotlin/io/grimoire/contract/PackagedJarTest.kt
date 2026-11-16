@@ -22,10 +22,16 @@ class PackagedJarTest {
         contract("ar-galaxynovels", GalaxyNovelsContract::run)
     }
 
+    @Test fun `NovlTime declares its cursor API requirement`() {
+        JarFile(File(System.getProperty("extension.ar-novltime.jar"))).use { jar ->
+            assertEquals("1.6", jar.manifest.mainAttributes.getValue("Grimoire-Core-Api"))
+        }
+    }
+
     private suspend fun contract(module: String, runContract: suspend (Source) -> Map<String, String>) {
         val file = File(System.getProperty("extension.$module.jar"))
         val metadata = JSONObject(File(System.getProperty("extension.$module.identity")).readText())
-        for (field in listOf("package", "sourceClass", "versionCode", "versionName", "sourceVersionCode")) {
+        for (field in listOf("package", "sourceClass", "versionCode", "versionName", "sourceVersionCode", "coreApi")) {
             val expected = requireNotNull(System.getProperty("extension.$module.expected.$field"))
             assertEquals(expected, metadata.getString(field), "Current $module declarations: $field")
         }
@@ -41,7 +47,7 @@ class PackagedJarTest {
             jar.manifest.mainAttributes
         }
         assertEquals("1", attributes.getValue("Grimoire-Extension-Format"))
-        assertEquals("1.6", attributes.getValue("Grimoire-Core-Api"))
+        assertEquals("1.5", attributes.getValue("Grimoire-Core-Api"))
         listOf("package" to "Grimoire-Source-Package", "sourceClass" to "Grimoire-Source-Class",
             "versionCode" to "Grimoire-Version-Code", "versionName" to "Grimoire-Version-Name",
             "sourceVersionCode" to "Grimoire-Source-Version-Code").forEach { (key, header) ->

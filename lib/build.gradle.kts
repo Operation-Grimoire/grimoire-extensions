@@ -22,9 +22,9 @@ android {
 
     defaultConfig {
         minSdk = 26
-        // The APK requirement uses the catalog pin; the JAR uses it by default.
-        resValue("string", "grimoire_extension_min_api", libs.versions.extensionsApi.get()
-            .substringBefore('-').split('.').take(2).joinToString("."))
+        // Extensions using a newer API override this default compatibility floor.
+        val minimumApi = "1.5"
+        resValue("string", "grimoire_extension_min_api", minimumApi)
     }
 
     compileOptions {

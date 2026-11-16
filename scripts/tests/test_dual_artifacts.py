@@ -53,13 +53,11 @@ class ArtifactGatesTest(unittest.TestCase):
 
     def test_apk_requirement_must_exist_and_match_the_jar(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
-                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
-        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.5",
+                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2", "coreApi": "1.6"}
+        headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.6",
                    "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                    "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
-        with tempfile.TemporaryDirectory() as directory, patch("build_dual.ROOT", Path(directory)):
-            (Path(directory) / "gradle").mkdir()
-            (Path(directory) / "gradle/libs.versions.toml").write_text('[versions]\nextensionsApi = "1.5.0"\n', encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
             jar = Path(directory) / "fixture.jar"
             with zipfile.ZipFile(jar, "w") as archive:
                 archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
@@ -67,45 +65,39 @@ class ArtifactGatesTest(unittest.TestCase):
             badging = "package: name='io.grimoire.extension.fixture' versionCode='1' versionName='1.0.0'"
             entry = 'A: android:name="grimoire.extension.class"\n  A: android:value="io.grimoire.extension.fixture.Fixture"\n'
             requirement = 'A: android:name="grimoire.extension.minApi"\n  A: android:value=@0x7f090000\n'
-            for tree, resource in ((entry, "1.5"), (entry + requirement, "1.4"), (entry + requirement, "1.5")):
+            for tree, resource in ((entry, "1.6"), (entry + requirement, "1.4"), (entry + requirement, "1.6")):
                 resources = f'resource 0x7f090000 string/grimoire_extension_min_api\n  () "{resource}"\n'
                 with self.subTest(declared=bool(requirement in tree), api=resource), patch(
                     "build_dual.subprocess.check_output", side_effect=[badging, tree, resources],
                 ):
-                    if tree == entry + requirement and resource == "1.5":
-                        self.assertEqual(validate(jar, Path("fixture.apk"), Path("aapt2"), expected)["Grimoire-Core-Api"], "1.5")
+                    if tree == entry + requirement and resource == "1.6":
+                        self.assertEqual(validate(jar, Path("fixture.apk"), Path("aapt2"), expected)["Grimoire-Core-Api"], "1.6")
                     else:
                         with self.assertRaises(ValueError):
                             validate(jar, Path("fixture.apk"), Path("aapt2"), expected)
 
-    def test_jar_core_requirement_follows_the_shared_api_pin(self):
+    def test_jar_core_requirement_follows_the_extension_declaration(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
-                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
+                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2", "coreApi": "1.6"}
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "gradle").mkdir()
-            catalog = root / "gradle/libs.versions.toml"
-            jar = root / "fixture.jar"
-            for pin in ("1.5.0", "1.5.1-SNAPSHOT", "1.6.0"):
-                catalog.write_text(f'[versions]\nextensionsApi = "{pin}"\n', encoding="utf-8")
-                core_api = ".".join(pin.split(".")[:2])
-                for requirement in sorted({"1.4", "1.5", core_api, "9.0"}):
-                    headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": requirement,
-                               "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
-                               "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
-                    with zipfile.ZipFile(jar, "w") as archive:
-                        archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
-                        archive.writestr(expected["sourceClass"].replace(".", "/") + ".class", bytes.fromhex("cafebabe00000037"))
-                    with self.subTest(pin=pin, requirement=requirement), patch("build_dual.ROOT", root):
-                        if requirement == core_api:
-                            self.assertEqual(validate_jar(jar, expected)["Grimoire-Core-Api"], core_api)
-                        else:
-                            with self.assertRaises(ValueError):
-                                validate_jar(jar, expected)
+            jar = Path(directory) / "fixture.jar"
+            for requirement in ("1.5", "1.6", "9.0"):
+                headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": requirement,
+                           "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
+                           "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
+                with zipfile.ZipFile(jar, "w") as archive:
+                    archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
+                    archive.writestr(expected["sourceClass"].replace(".", "/") + ".class", bytes.fromhex("cafebabe00000037"))
+                with self.subTest(requirement=requirement):
+                    if requirement == expected["coreApi"]:
+                        self.assertEqual(validate_jar(jar, expected)["Grimoire-Core-Api"], "1.6")
+                    else:
+                        with self.assertRaises(ValueError):
+                            validate_jar(jar, expected)
 
     def test_jar_rejects_api_bundling_and_incompatible_metadata_before_android_tools(self):
         expected = {"package": "io.grimoire.extension.fixture", "sourceClass": "io.grimoire.extension.fixture.Fixture",
-                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2"}
+                    "versionCode": "1", "versionName": "1.0.0", "sourceVersionCode": "2", "coreApi": "1.5"}
         headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.5",
                    "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                    "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
@@ -180,6 +172,7 @@ class SourceIdentityTest(unittest.TestCase):
                 "versionCode": "4",
                 "versionName": "1.0.3",
                 "sourceVersionCode": "5",
+                "coreApi": "1.5",
             })
 
     def test_one_line_source_info_still_supplies_the_annotation_version(self):
@@ -197,7 +190,7 @@ class SourceIdentityTest(unittest.TestCase):
                      "versionCode": "4", "versionName": "1.0.3", "sourceVersionCode": "5"}
             with self.assertRaisesRegex(ValueError, "current Android declarations"):
                 expected_identity(root, stale)
-            current = dict(stale, versionName="1.0.4", sourceVersionCode="9")
+            current = dict(stale, versionName="1.0.4", sourceVersionCode="9", coreApi="1.5")
             self.assertEqual(expected_identity(root, current)["versionName"], "1.0.4")
 
     def test_royal_road_identity_comes_from_its_android_module(self):
@@ -207,6 +200,24 @@ class SourceIdentityTest(unittest.TestCase):
         self.assertEqual(identity["versionCode"], "5")
         self.assertEqual(identity["versionName"], "1.0.4")
         self.assertEqual(identity["sourceVersionCode"], "6")
+        self.assertEqual(identity["coreApi"], "1.5")
+
+    def test_novltime_declares_its_newer_api_requirement(self):
+        identity = source_identity(Path(__file__).resolve().parents[2] / "src" / "ar" / "novltime")
+        self.assertEqual(identity["coreApi"], "1.6")
+
+    def test_invalid_minimum_api_format_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "lib").mkdir()
+            (root / "lib/build.gradle.kts").write_text('val minimumApi = "1.5"\n', encoding="utf-8")
+            extension = root / "fixture"
+            extension.mkdir()
+            self._write_extension(extension)
+            with (extension / "build.gradle.kts").open("a", encoding="utf-8") as gradle:
+                gradle.write('\nval minimumApi = "1.6.0"\n')
+            with patch("build_dual.ROOT", root), self.assertRaisesRegex(ValueError, "minimumApi.*major.minor"):
+                source_identity(extension)
 
     def test_every_extension_declares_a_readable_identity(self):
         directories = extension_dirs()

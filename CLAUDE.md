@@ -15,6 +15,10 @@ browser backed by a generated `index.json`.
   R18 repo); see "Publishing `lib/`" below. The extensions in *this* repo
   consume it as `project(":lib")` — only sibling repos consume the artifact.
 - Model/network types come from the `grimoire-extensions-api` dependency.
+- The shared library declares the existing API 1.5 compatibility floor. An
+  extension that uses a newer API must set `minimumApi` in `defaultConfig` and
+  override the `grimoire_extension_min_api` string resource with that value.
+  The JVM build reads the same declaration for `Grimoire-Core-Api`.
 
 ## Versioning — bump on every change to an extension
 

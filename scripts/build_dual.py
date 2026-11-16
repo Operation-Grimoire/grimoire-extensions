@@ -47,6 +47,12 @@ def source_identity(directory: Path) -> dict[str, str]:
     package_name = _declaration(gradle, "applicationId", r'applicationId\s*=\s*"([^"]+)"', f"{name} build.gradle.kts")
     version_code = _declaration(gradle, "versionCode", r"versionCode\s*=\s*(\d+)", f"{name} build.gradle.kts")
     version_name = _declaration(gradle, "versionName", r'versionName\s*=\s*"([^"]+)"', f"{name} build.gradle.kts")
+    library_gradle = (ROOT / "lib/build.gradle.kts").read_text(encoding="utf-8")
+    default_api = _declaration(library_gradle, "minimumApi", r'val minimumApi\s*=\s*"([^"]+)"', "shared library")
+    override = re.search(r'val minimumApi\s*=\s*"([^"]+)"', gradle)
+    core_api = override.group(1) if override else default_api
+    if re.fullmatch(r"\d+\.\d+", core_api) is None:
+        raise ValueError(f"{name} minimumApi must be <major.minor>, got {core_api}")
     manifest = (directory / "src/main/AndroidManifest.xml").read_text(encoding="utf-8")
     source_class = _declaration(
         manifest, "grimoire.extension.class",
@@ -62,12 +68,12 @@ def source_identity(directory: Path) -> dict[str, str]:
     source_version = _declaration(
         joined[at:at + 800], "versionCode", r"versionCode\s*=\s*(\d+)", f"{name} @SourceInfo")
     return {"package": package_name, "sourceClass": source_class, "versionCode": version_code,
-            "versionName": version_name, "sourceVersionCode": source_version}
+            "versionName": version_name, "sourceVersionCode": source_version, "coreApi": core_api}
 
 
 def expected_identity(directory: Path, generated: dict) -> dict[str, str]:
     expected = source_identity(directory)
-    actual = {key: str(generated[key]) for key in expected if key in generated}
+    actual = {key: str(generated.get(key)) for key in expected}
     if actual != expected:
         raise ValueError(f"{module_name(directory)} identity.json does not match the current Android declarations")
     return expected
@@ -81,9 +87,7 @@ def validate_jar(jar: Path, expected: dict[str, str]) -> dict[str, str]:
     for key, header in pairs.items():
         if attrs.get(header) != expected[key]:
             raise ValueError(f"JAR {header} differs from the extension Android metadata")
-    catalog = (ROOT / "gradle/libs.versions.toml").read_text(encoding="utf-8")
-    core_api = _declaration(catalog, "extensionsApi", r'(?m)^extensionsApi\s*=\s*"(\d+\.\d+)\.\d+(?:-SNAPSHOT)?"', "version catalog")
-    if attrs.get("Grimoire-Extension-Format") != "1" or attrs.get("Grimoire-Core-Api") != core_api:
+    if attrs.get("Grimoire-Extension-Format") != "1" or attrs.get("Grimoire-Core-Api") != expected["coreApi"]:
         raise ValueError("Unsupported JAR format/core API")
     with zipfile.ZipFile(jar) as archive:
         classes = [name for name in archive.namelist() if name.endswith(".class")]

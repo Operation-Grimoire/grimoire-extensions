@@ -57,7 +57,9 @@ class ArtifactGatesTest(unittest.TestCase):
         headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": "1.5",
                    "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                    "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, patch("build_dual.ROOT", Path(directory)):
+            (Path(directory) / "gradle").mkdir()
+            (Path(directory) / "gradle/libs.versions.toml").write_text('[versions]\nextensionsApi = "1.5.0"\n', encoding="utf-8")
             jar = Path(directory) / "fixture.jar"
             with zipfile.ZipFile(jar, "w") as archive:
                 archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
@@ -84,9 +86,10 @@ class ArtifactGatesTest(unittest.TestCase):
             (root / "gradle").mkdir()
             catalog = root / "gradle/libs.versions.toml"
             jar = root / "fixture.jar"
-            for pin in ("1.5.0", "1.5.1-SNAPSHOT"):
+            for pin in ("1.5.0", "1.5.1-SNAPSHOT", "1.6.0"):
                 catalog.write_text(f'[versions]\nextensionsApi = "{pin}"\n', encoding="utf-8")
-                for requirement in ("1.4", "1.5", "9.0"):
+                core_api = ".".join(pin.split(".")[:2])
+                for requirement in sorted({"1.4", "1.5", core_api, "9.0"}):
                     headers = {"Grimoire-Extension-Format": "1", "Grimoire-Core-Api": requirement,
                                "Grimoire-Source-Package": expected["package"], "Grimoire-Source-Class": expected["sourceClass"],
                                "Grimoire-Version-Code": "1", "Grimoire-Version-Name": "1.0.0", "Grimoire-Source-Version-Code": "2"}
@@ -94,8 +97,8 @@ class ArtifactGatesTest(unittest.TestCase):
                         archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n\r\n")
                         archive.writestr(expected["sourceClass"].replace(".", "/") + ".class", bytes.fromhex("cafebabe00000037"))
                     with self.subTest(pin=pin, requirement=requirement), patch("build_dual.ROOT", root):
-                        if requirement == "1.5":
-                            self.assertEqual(validate_jar(jar, expected)["Grimoire-Core-Api"], "1.5")
+                        if requirement == core_api:
+                            self.assertEqual(validate_jar(jar, expected)["Grimoire-Core-Api"], core_api)
                         else:
                             with self.assertRaises(ValueError):
                                 validate_jar(jar, expected)

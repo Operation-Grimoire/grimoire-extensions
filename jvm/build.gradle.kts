@@ -200,6 +200,7 @@ tasks.named<Jar>("jar") { enabled = false }
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
+    systemProperty("extension.expected.coreApi", coreApi.get())
     for ((identity, jarTask) in extensionJars.filter { it.first.module in setOf("en-royalroad", "ar-galaxynovels") }) {
         dependsOn(jarTask)
         val module = identity.module

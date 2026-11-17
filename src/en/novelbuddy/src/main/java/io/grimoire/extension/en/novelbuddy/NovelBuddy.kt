@@ -19,12 +19,15 @@ import io.grimoire.api.util.richDescription
 import io.grimoire.api.util.richHtml
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.json.JSONException
 import org.json.JSONObject
 import org.jsoup.Jsoup
+import java.io.IOException
 import java.time.Instant
 
-@SourceInfo(name = "NovelBuddy", lang = Language.EN, baseUrl = "https://novelbuddy.me", versionCode = 13)
-class NovelBuddy :
+@SourceInfo(name = "NovelBuddy", lang = Language.EN, baseUrl = "https://novelbuddy.me", versionCode = 14)
+open class NovelBuddy :
     HttpSource(),
     PopularSource,
     LatestSource,
@@ -78,7 +81,7 @@ class NovelBuddy :
 
     override suspend fun getNovelDetails(novel: Novel): Novel = withContext(Dispatchers.IO) {
         val url = resolveUrl(novel.url)
-        val manga = nextDataPageProps(getBody(url)).getJSONObject("initialManga")
+        val manga = loadManga(url)
         val authorsArr = manga.optJSONArray("authors")
         val genresArr = manga.optJSONArray("genres")
         val ratingRaw = manga.optDouble("rating", Double.NaN)
@@ -110,12 +113,14 @@ class NovelBuddy :
     }
 
     override suspend fun getChapterList(novel: Novel): List<Chapter> = withContext(Dispatchers.IO) {
-        val manga = nextDataPageProps(getBody(resolveUrl(novel.url))).getJSONObject("initialManga")
+        val manga = loadManga(resolveUrl(novel.url))
         val mangaId = manga.getString("id")
         val cv = manga.optString("cv")
         val slug = manga.optString("slug")
         val data = JSONObject(getBody("$apiBase/titles/$mangaId/chapters?cv=$cv"))
-        val chapters = data.optJSONObject("data")?.optJSONArray("chapters") ?: return@withContext emptyList()
+        if (data.opt("success") == false) throw IOException("NovelBuddy: chapter list is unavailable. Please try again.")
+        val chapters = data.optJSONObject("data")?.optJSONArray("chapters")
+            ?: throw IOException("NovelBuddy: chapter list is unavailable. Please try again.")
         (0 until chapters.length()).map { i ->
             val ch = chapters.getJSONObject(i)
             Chapter(
@@ -163,16 +168,38 @@ class NovelBuddy :
         val slugs: Array<String> = (listOf("") + genres.map { it.second }).toTypedArray()
     }
 
-    private suspend fun getBody(url: String): String = get(url).use { it.body!!.string() }
+    private suspend fun getBody(url: String): String = get(url).use { response ->
+        if (!response.isSuccessful) throw IOException("NovelBuddy: HTTP ${response.code}")
+        response.body?.string() ?: throw IOException("NovelBuddy: empty response")
+    }
+
+    private suspend fun loadManga(url: String): JSONObject {
+        val props = nextDataPageProps(getBody(url))
+        props.optJSONObject("initialManga")?.let { return it }
+        // SSR can time out while the public endpoint used by the site still works.
+        val slug = url.toHttpUrl().pathSegments.lastOrNull { it.isNotEmpty() }
+            ?: throw IOException("NovelBuddy: invalid novel URL")
+        val apiUrl = apiBase.toHttpUrl().newBuilder().addPathSegments("titles/by-slug")
+            .addPathSegment(slug).addQueryParameter("include", "details").build()
+        val response = try {
+            JSONObject(getBody(apiUrl.toString()))
+        } catch (e: JSONException) {
+            throw IOException("NovelBuddy: invalid details response. Please try again.", e)
+        }
+        val manga = response.optJSONObject("data")?.optJSONObject("title")
+        if (response.optBoolean("success") && manga != null &&
+            (manga.opt("id") as? String)?.isNotBlank() == true &&
+            (manga.opt("name") as? String)?.isNotBlank() == true) return manga
+        val reason = (response.opt("message") as? String)?.takeIf { it.isNotBlank() }
+            ?: (props.opt("initialError") as? String)?.takeIf { it.isNotBlank() }
+            ?: "Novel details are unavailable. Please try again."
+        throw IOException("NovelBuddy: $reason")
+    }
 
     private fun nextDataPageProps(html: String): JSONObject {
-        val marker = """<script id="__NEXT_DATA__" type="application/json">"""
-        val start = html.indexOf(marker)
-        val contentStart = html.indexOf('>', start) + 1
-        val contentEnd = html.indexOf("</script>", contentStart)
-        return JSONObject(html.substring(contentStart, contentEnd))
-            .getJSONObject("props")
-            .getJSONObject("pageProps")
+        val data = Jsoup.parse(html).selectFirst("script#__NEXT_DATA__")?.data()?.takeIf { it.isNotBlank() }
+            ?: throw IOException("NovelBuddy: page data is unavailable. Please try again.")
+        return JSONObject(data).getJSONObject("props").getJSONObject("pageProps")
     }
 
     private fun itemToNovel(item: JSONObject) = Novel(

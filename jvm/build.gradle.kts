@@ -183,12 +183,16 @@ tasks.register("jars") {
     dependsOn(libJar, extensionJars.map { it.second })
 }
 
+val novelbuddy = extensionJars.single { it.first.module == "en-novelbuddy" }
 val royalroad = extensionJars.single { it.first.module == "en-royalroad" }
 sourceSets.named("test").configure {
+    compileClasspath += sourceSets.getByName(novelbuddy.first.module.sourceSetName()).output
+    runtimeClasspath += sourceSets.getByName(novelbuddy.first.module.sourceSetName()).output
     compileClasspath += sourceSets.getByName(royalroad.first.module.sourceSetName()).output
     runtimeClasspath += sourceSets.getByName(royalroad.first.module.sourceSetName()).output
 }
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("src/en/royalroad/src/test/java").asFile)
+kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("src/en/novelbuddy/src/test/java").asFile)
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/royalroad/src/main/kotlin").asFile)
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/galaxynovels/src/main/kotlin").asFile)
 kotlin.sourceSets.getByName("test").kotlin.srcDir(repo.file("contracts/shared/src/main/kotlin").asFile)

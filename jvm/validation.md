@@ -44,12 +44,12 @@ the public by-slug details endpoint used by the site's client. A failed fallback
 raises a source error; it cannot initialize a fake novel or hide a chapter error
 as an empty list. Valid server-rendered data avoids the fallback request.
 
-Eight deterministic cases run in both Android unit tests and the JVM suite.
+Ten deterministic cases run in both Android unit tests and the JVM suite.
 They cover normal SSR, details/chapter recovery, exact chapter paths/order,
 unavailable/partial payloads, HTTP failures, malformed fallback JSON with its
 cause retained, and missing page data. The failures were reproduced before the
-corresponding fixes. Local JVM reports contain 27 passing tests; Android reports
-contain eight, with no failures or skips. APK assembly and lint pass. The dual
+corresponding fixes. Local JVM reports contain 29 passing tests; Android reports
+contain ten, with no failures or skips. APK assembly and lint pass. The dual
 artifact validator checks matching version/class/minimum API, Java 11 and no
 Android references in the JAR.
 
@@ -59,4 +59,5 @@ with zero errors or warnings. The site's public details API was independently
 verified while its SSR page returned null with a timeout message; later SSR
 requests recovered too. Fixtures prove the fallback branch deterministically;
 Inspector is JVM/live-source evidence, not Android device or native APK parity.
-Automatic source publication and exact-head CI are recorded in issue #144/its PR.
+At this local checkpoint, automatic source publication and final-head CI remain
+pending; issue #144 and PR #145 track the current shipping and review status.

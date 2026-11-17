@@ -51,6 +51,15 @@ class NovelBuddyTest {
         assertEquals(listOf("novelbuddy.me/fixture-book", "api.novelbuddy.me/titles/by-slug/fixture-book?include=details"), requests)
     }
 
+    @Test fun `partial SSR details recover instead of returning unusable metadata`() = runBlocking {
+        for (initial in listOf("""{"id":"partial"}""", """{"id":"","name":"Partial"}""")) {
+            val requests = mutableListOf<String>()
+            val source = source(requests) { path -> if (path=="/fixture-book") 200 to page(initial) else 200 to """{"success":true,"data":{"title":$title}}""" }
+            assertEquals("Fixture Book", source.getNovelDetails(novel).title)
+            assertEquals(2, requests.size)
+        }
+    }
+
     @Test fun `chapter loading uses recovered identity and preserves API paths and order`() = runBlocking {
         val requests = mutableListOf<String>()
         val source = source(requests) { path -> when(path) {
@@ -104,5 +113,14 @@ class NovelBuddyTest {
         val source = source(requests) { 200 to "<html><title>Upstream unavailable</title></html>" }
         val error = assertThrows(IOException::class.java) { runBlocking { source.getNovelDetails(novel) } }
         assertTrue(error.message!!.contains("NovelBuddy")); assertEquals(1, requests.size)
+    }
+
+    @Test fun `malformed SSR JSON reports source context and retains the parser cause`() {
+        val requests = mutableListOf<String>()
+        val source = source(requests) { 200 to """<script id="__NEXT_DATA__" type="application/json">{invalid</script>""" }
+        val error = assertThrows(IOException::class.java) { runBlocking { source.getNovelDetails(novel) } }
+        assertTrue(error.message!!.contains("NovelBuddy"))
+        assertTrue(generateSequence<Throwable>(error) { it.cause }.any { it is JSONException })
+        assertEquals(1, requests.size)
     }
 }

@@ -173,9 +173,12 @@ open class NovelBuddy :
         response.body?.string() ?: throw IOException("NovelBuddy: empty response")
     }
 
+    private fun JSONObject.hasRequiredDetails(): Boolean =
+        (opt("id") as? String)?.isNotBlank() == true && (opt("name") as? String)?.isNotBlank() == true
+
     private suspend fun loadManga(url: String): JSONObject {
         val props = nextDataPageProps(getBody(url))
-        props.optJSONObject("initialManga")?.let { return it }
+        props.optJSONObject("initialManga")?.takeIf { it.hasRequiredDetails() }?.let { return it }
         // SSR can time out while the public endpoint used by the site still works.
         val slug = url.toHttpUrl().pathSegments.lastOrNull { it.isNotEmpty() }
             ?: throw IOException("NovelBuddy: invalid novel URL")
@@ -187,9 +190,7 @@ open class NovelBuddy :
             throw IOException("NovelBuddy: invalid details response. Please try again.", e)
         }
         val manga = response.optJSONObject("data")?.optJSONObject("title")
-        if (response.optBoolean("success") && manga != null &&
-            (manga.opt("id") as? String)?.isNotBlank() == true &&
-            (manga.opt("name") as? String)?.isNotBlank() == true) return manga
+        if (response.optBoolean("success") && manga != null && manga.hasRequiredDetails()) return manga
         val reason = (response.opt("message") as? String)?.takeIf { it.isNotBlank() }
             ?: (props.opt("initialError") as? String)?.takeIf { it.isNotBlank() }
             ?: "Novel details are unavailable. Please try again."
@@ -199,7 +200,11 @@ open class NovelBuddy :
     private fun nextDataPageProps(html: String): JSONObject {
         val data = Jsoup.parse(html).selectFirst("script#__NEXT_DATA__")?.data()?.takeIf { it.isNotBlank() }
             ?: throw IOException("NovelBuddy: page data is unavailable. Please try again.")
-        return JSONObject(data).getJSONObject("props").getJSONObject("pageProps")
+        return try {
+            JSONObject(data).getJSONObject("props").getJSONObject("pageProps")
+        } catch (e: JSONException) {
+            throw IOException("NovelBuddy: invalid page data. Please try again.", e)
+        }
     }
 
     private fun itemToNovel(item: JSONObject) = Novel(

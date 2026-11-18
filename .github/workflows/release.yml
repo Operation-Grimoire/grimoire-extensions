@@ -25,3 +25,138 @@ jobs:
     with:
       chunk_size: ${{ inputs.chunk_size || '4' }}
       force_all:  ${{ inputs.force_all  || false }}
+
+  # Desktop JAR index (scripts/jar_index.py). Runs after the APK release so
+  # index.json and its icons exist. Skips until JAR_INDEX_SIGNING_KEY is set.
+  jar-index-key:
+    needs: release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          JAR_INDEX_SIGNING_KEY: ${{ secrets.JAR_INDEX_SIGNING_KEY }}
+        run: |
+          if [ -n "$JAR_INDEX_SIGNING_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Desktop JAR index skipped::JAR_INDEX_SIGNING_KEY is not set. The Android release is unaffected."
+          fi
+
+  # Build with a read-only token; the signing key never reaches build code.
+  jar-index-build:
+    needs: jar-index-key
+    if: needs.jar-index-key.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test the artifact and index gates
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build and verify every JAR with the pinned API
+        run: |
+          chmod +x gradlew
+          python scripts/build_dual.py --jars-only
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar-index-inputs
+          path: |
+            jvm/build/extensions/*/*.jar
+            jvm/build/extensions/*/identity.json
+            jvm/build/host/*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  jar-index-publish:
+    needs: jar-index-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    # Publications never interleave, so each sequence follows the last one.
+    concurrency:
+      group: jar-index-publication
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: jar-index-inputs
+          path: jvm/build
+      - name: Fetch the published indexes
+        run: |
+          mkdir -p build/published
+          gh release download latest -p index.json -D build/published
+          gh release download latest -p jar-index.json -D build/published \
+            || echo "No jar-index.json published yet"
+          gh api "repos/$GH_REPO/releases/tags/latest" --jq '[.assets[] | {name, digest}]' \
+            > build/published/assets.json
+      - name: Generate the index
+        run: |
+          python scripts/jar_index.py generate --output build/jar-index \
+            --android-index build/published/index.json \
+            --previous build/published/jar-index.json
+      - name: Sign the index
+        env:
+          JAR_INDEX_SIGNING_KEY: ${{ secrets.JAR_INDEX_SIGNING_KEY }}
+        run: |
+          key="$RUNNER_TEMP/jar-index-key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$JAR_INDEX_SIGNING_KEY" > "$key")
+          python scripts/jar_index.py sign --index build/jar-index/jar-index.json --key "$key"
+      - name: Verify against the pinned official key
+        run: python scripts/jar_index.py verify --index build/jar-index/jar-index.json
+      - name: Check that this commit is still the head of main
+        id: head
+        run: |
+          head=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Desktop JAR index skipped::main moved to $head; that run publishes instead."
+          fi
+      # JARs first, so the published index never names a missing file.
+      - name: Upload the JARs, then the index and signature
+        if: steps.head.outputs.current == 'true'
+        run: |
+          python scripts/jar_index.py pending --staging build/jar-index \
+            --assets build/published/assets.json > build/pending.txt
+          mapfile -t jars < build/pending.txt
+          if [ "${#jars[@]}" -gt 0 ]; then
+            gh release upload latest "${jars[@]}" --clobber
+          fi
+          gh release upload latest build/jar-index/jar-index.json build/jar-index/jar-index.json.sig --clobber
+          {
+            echo "### Desktop JAR index"
+            echo "Uploaded ${#jars[@]} changed JAR(s) and the signed jar-index.json."
+            grep -o '"sequence": [0-9]*' build/jar-index/jar-index.json
+          } >> "$GITHUB_STEP_SUMMARY"

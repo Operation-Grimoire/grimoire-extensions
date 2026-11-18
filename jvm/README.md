@@ -148,6 +148,49 @@ The new offline contract does not close that live acceptance issue.
 
 Every extension under `src/<language>/<name>` still gets a thin JAR from that same
 directory. No Android/JVM parser forks or generated source copies are introduced.
-A maintained desktop host, real browser adapters, signed JAR distribution,
-release indexes, reusable `extensions-ci` integration and publication remain
-later work. See [local validation](validation.md) for the earlier Royal Road proof.
+A maintained desktop host, real browser adapters and reusable `extensions-ci`
+integration remain later work. See [local validation](validation.md) for the
+earlier Royal Road proof.
+
+## Signed JAR index
+
+Every main-branch run of `release.yml` publishes the Desktop catalog next to
+Android's `index.json` on the `latest` release, after the APK release succeeds.
+The format is defined in the app's
+[desktop extension contract](https://github.com/Operation-Grimoire/grimoire/blob/master/docs/desktop-extensions.md).
+
+1. `jar-index-build` runs the script tests and `build_dual.py --jars-only` with
+   a read-only token and the pinned API.
+2. `jar-index-publish` runs in the `jar-index-publication` concurrency group.
+   `scripts/jar_index.py generate` writes `jar-index.json`. `sign` signs it with
+   `openssl pkeyutl -sign -rawin` and the `JAR_INDEX_SIGNING_KEY` secret (PEM
+   PKCS#8 Ed25519). `verify` then checks it against the pinned official public
+   key `PYUsj2AvddEkNAiO8Vc2tPskScoilyAdbMG8ZNN/IfM=`. A different key fails the job.
+3. Changed JARs upload first, then `jar-index.json` and `jar-index.json.sig`.
+   Nothing is published when `main` has moved on, or when the secret is unset.
+   An unset secret only adds a notice. It does not fail the Android release.
+
+Field sources:
+
+| Field | Source |
+| --- | --- |
+| `pkg`, `sourceClass`, `versionCode`, `versionName`, `sourceVersionCode`, `coreApi`, `hostLibraries` | The JAR's `Grimoire-*` manifest. Must equal `identity.json`. |
+| `file`, `sha256`, `size` | The JAR bytes. Over 20 MiB is rejected. |
+| `name`, `adultContent` | `@SourceInfo`, as in the Android index generator. |
+| `lang` | A string `@SourceInfo` lang, otherwise the `src/<language>` directory, as in `index.json`. |
+| `iconUrl` | The same package's `iconUrl` in the published `index.json`. Left out with a warning when absent. |
+| `libraries` | Each `io.grimoire` host library coordinate, mapped to its JAR in `jvm/build/host`. `org.json` is supplied by the host. |
+| `sequence` | Generation time in epoch seconds. Always above the previously published value. |
+
+`sha256` warnings flag a JAR whose bytes changed without a `versionCode` bump.
+Desktop treats such an entry as a conflict for existing installs.
+
+To reproduce locally with a throwaway key:
+
+```sh
+./gradlew -p jvm jars
+openssl genpkey -algorithm ed25519 -out /tmp/key.pem
+python scripts/jar_index.py generate --output build/jar-index --android-index index.json
+python scripts/jar_index.py sign --index build/jar-index/jar-index.json --key /tmp/key.pem
+python scripts/jar_index.py verify --index build/jar-index/jar-index.json   --public-key "$(openssl pkey -in /tmp/key.pem -pubout -outform DER | tail -c 32 | base64)"
+```

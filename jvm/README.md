@@ -206,10 +206,12 @@ For that reason, published bytes never change under the same version:
   The rebuilt JAR is not uploaded. If its bytes differ, the job adds a notice.
 - **New version.** Only a higher `versionCode` publishes new bytes.
 - **Lower version.** A `versionCode` below the published one fails the job.
-- **Missing asset.** If the previous file is missing from the release, the
-  rebuilt JAR is published instead.
+- **Missing asset.** If the previous file is missing from the release and the
+  rebuild has the same bytes as the signed entry, it is restored under its
+  signed name. If the bytes differ, the job fails and asks for a `versionCode`
+  bump.
 - **Changed library.** If the shared library's rebuilt bytes differ from the
-  published entry, every extension that lists its coordinate in
+  previous signed entry, even when its asset is missing, every extension that lists its coordinate in
   `hostLibraries` must have a higher `versionCode`. Otherwise the job fails and
   names the extensions to bump. Each index lists one library per coordinate.
   The library file name is content-addressed, as

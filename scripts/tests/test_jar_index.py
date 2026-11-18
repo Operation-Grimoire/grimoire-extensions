@@ -107,10 +107,11 @@ class JarIndexTest(unittest.TestCase):
         self.assertEqual((entry["name"], entry["lang"], entry["adultContent"]), ("Fixture Novels", "en", "PARTIAL"))
         self.assertEqual(entry["iconUrl"], "https://example.test/en-fixture.png")
         self.assertEqual(entry["file"], fixture["jar"].name)
-        self.assertEqual(index["libraries"], [{"coordinate": LIB, "file": library.name,
-                                               "sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
-                                               "size": library.stat().st_size}])
-        self.assertEqual(files, [fixture["jar"], library])
+        digest = hashlib.sha256(library.read_bytes()).hexdigest()
+        published = f"extensions-lib-1.0.0-SNAPSHOT-{digest[:12]}.jar"
+        self.assertEqual(index["libraries"], [{"coordinate": LIB, "file": published,
+                                               "sha256": digest, "size": library.stat().st_size}])
+        self.assertEqual(files, [(fixture["jar"], fixture["jar"].name), (library, published)])
 
     def test_digest_and_size_describe_the_exact_bytes(self):
         fixture = write_extension(self.root, "en", "fixture")
@@ -142,8 +143,9 @@ class JarIndexTest(unittest.TestCase):
         self.assertEqual(index["sequence"], 1000)
 
     def publish(self, root: Path, previous: dict | None = None, assets: dict | None = None):
+        """Generate and return the index, the upload sources and the log."""
         (index, files), output = quiet(jar_index.generate, root, [], previous, 10, assets)
-        return index, files, output
+        return index, [source for source, _ in files], output
 
     def test_published_version_keeps_its_entry_and_skips_upload(self):
         fixture = write_extension(self.root / "old", "en", "fixture")
@@ -221,8 +223,13 @@ class JarIndexTest(unittest.TestCase):
         write_extension(new, "en", "plain", 2)
         library = write_library(new, b"changed")
         index, files, _ = self.publish(new, previous, release_assets(previous))
-        self.assertEqual(index["libraries"][0]["sha256"], hashlib.sha256(library.read_bytes()).hexdigest())
+        digest = hashlib.sha256(library.read_bytes()).hexdigest()
+        self.assertEqual(index["libraries"][0]["sha256"], digest)
         self.assertEqual(files, [alpha["jar"], library])
+        # A changed library gets a new file name, so the old index keeps its bytes.
+        self.assertEqual(index["libraries"][0]["file"], f"extensions-lib-1.0.0-SNAPSHOT-{digest[:12]}.jar")
+        self.assertNotEqual(index["libraries"][0]["file"], previous["libraries"][0]["file"])
+        self.assertIn(previous["libraries"][0]["file"], release_assets(previous))
         self.assertEqual([e["sha256"] for e in index["extensions"] if e["pkg"].endswith("plain")],
                          [e["sha256"] for e in previous["extensions"] if e["pkg"].endswith("plain")])
 
@@ -233,6 +240,27 @@ class JarIndexTest(unittest.TestCase):
         index, files, _ = self.publish(self.root, previous, release_assets(previous))
         self.assertEqual(index["libraries"], previous["libraries"])
         self.assertEqual(files, [])
+        self.assertTrue(jar_index.unchanged(index, previous))
+
+    def test_library_file_name_is_content_addressed(self):
+        write_extension(self.root, "en", "alpha", uses_lib=True)
+        library = write_library(self.root)
+        (index, files), _ = quiet(jar_index.generate, self.root, [], None, 1)
+        digest = hashlib.sha256(library.read_bytes()).hexdigest()
+        self.assertEqual(index["libraries"][0]["file"], f"extensions-lib-1.0.0-SNAPSHOT-{digest[:12]}.jar")
+        self.assertEqual(index["libraries"][0]["coordinate"], LIB)
+        output = self.root / "staged"
+        self.assertEqual(quiet(jar_index.main, ["generate", "--repo-root", str(self.root), "--output", str(output),
+                                                "--sequence", "1"])[0], 0)
+        self.assertTrue((output / index["libraries"][0]["file"]).is_file())
+        self.assertFalse((output / library.name).exists())
+
+    def test_old_versioned_index_pairs_are_pruned(self):
+        names = {f"jar-index-{n}.json{suffix}" for n in range(1, 7) for suffix in ("", ".sig")}
+        names |= {"jar-index.json", "jar-index.json.sig", "x.jar"}
+        self.assertEqual(jar_index.stale_versions(names, 4),
+                         ["jar-index-1.json", "jar-index-1.json.sig", "jar-index-2.json", "jar-index-2.json.sig"])
+        self.assertEqual(jar_index.stale_versions(names, 10), [])
 
     def test_rejects_artifacts_over_twenty_mebibytes(self):
         self.assertEqual(jar_index.MAX_ARTIFACT_BYTES, 20 * 1024 * 1024)
@@ -338,6 +366,110 @@ class JarIndexSignatureTest(unittest.TestCase):
         self.assertEqual(run("verify", "--index", str(index), "--public-key", self.public), 0)
         self.assertEqual(run("verify", "--index", str(index)), 1, "a non-official key must not pass the pinned check")
         self.assertEqual(json.loads(index.read_text(encoding="utf-8"))["sequence"], 42)
+
+
+@unittest.skipUnless(HAS_OPENSSL, "openssl is required for Ed25519 signing")
+class JarIndexRecoveryTest(unittest.TestCase):
+    """The release as seen by the next publication, after complete or interrupted uploads."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.key, self.public = make_key(self.root, "signing")
+        self.release = self.root / "release"
+        self.release.mkdir()
+
+    def publish_pair(self, sequence: int, key: Path | None = None) -> None:
+        """Upload the versioned pair, then replace the canonical pair, as the workflow does."""
+        staging = Path(tempfile.mkdtemp(dir=self.root))
+        index = staging / jar_index.INDEX_NAME
+        index.write_bytes(jar_index.encode({"format": 1, "repository": jar_index.REPOSITORY,
+                                            "sequence": sequence, "libraries": [], "extensions": []}))
+        jar_index.sign(index, key or self.key)
+        versioned = jar_index.versioned_name(sequence)
+        for suffix in ("", ".sig"):
+            shutil.copyfile(staging / (jar_index.INDEX_NAME + suffix), self.release / (versioned + suffix))
+            shutil.copyfile(staging / (jar_index.INDEX_NAME + suffix), self.release / (jar_index.INDEX_NAME + suffix))
+
+    def recover(self):
+        names = {path.name for path in self.release.iterdir()}
+        (result, output) = quiet(jar_index.recover, self.release, names, self.public)
+        path, canonical = result
+        return (path.name if path else None), canonical, output
+
+    def test_complete_publication_uses_the_canonical_pair(self):
+        self.publish_pair(10)
+        self.publish_pair(20)
+        self.assertEqual(self.recover()[:2], ("jar-index.json", True))
+
+    def test_mismatched_canonical_pair_recovers_from_the_versioned_pair(self):
+        self.publish_pair(10)
+        old_signature = (self.release / "jar-index.json.sig").read_bytes()
+        self.publish_pair(20)
+        # Interrupted after the canonical index replaced, before its signature.
+        (self.release / "jar-index.json.sig").write_bytes(old_signature)
+        name, canonical, output = self.recover()
+        self.assertEqual((name, canonical), ("jar-index-20.json", False))
+        self.assertIn("::warning::jar-index.json does not verify", output)
+        self.assertIn("recovering from jar-index-20.json", output)
+
+    def test_interrupted_before_the_canonical_swap_uses_the_newer_versioned_pair(self):
+        self.publish_pair(10)
+        self.publish_pair(20)
+        for suffix in ("", ".sig"):
+            shutil.copyfile(self.release / f"jar-index-10.json{suffix}", self.release / f"jar-index.json{suffix}")
+        self.assertEqual(self.recover()[:2], ("jar-index-20.json", False))
+
+    def test_missing_canonical_pair_recovers_and_unpaired_files_are_ignored(self):
+        self.publish_pair(10)
+        (self.release / "jar-index.json").unlink()
+        (self.release / "jar-index.json.sig").unlink()
+        (self.release / "jar-index-30.json").write_bytes(b"{}")
+        name, canonical, output = self.recover()
+        self.assertEqual((name, canonical), ("jar-index-10.json", False))
+        self.assertIn("::warning::jar-index-30.json has no signature", output)
+
+    def test_fails_when_pairs_exist_but_none_verifies(self):
+        self.publish_pair(10, make_key(self.root, "foreign")[0])
+        with self.assertRaisesRegex(jar_index.JarIndexError, "none verifies"):
+            self.recover()
+        # A validly signed index renamed to another sequence is not trusted either.
+        shutil.rmtree(self.release)
+        self.release.mkdir()
+        self.publish_pair(10)
+        (self.release / "jar-index.json").unlink()
+        (self.release / "jar-index.json.sig").unlink()
+        for suffix in ("", ".sig"):
+            (self.release / f"jar-index-10.json{suffix}").rename(self.release / f"jar-index-11.json{suffix}")
+        with self.assertRaisesRegex(jar_index.JarIndexError, "none verifies"):
+            self.recover()
+
+    def test_canonical_index_without_any_verifying_pair_fails(self):
+        (self.release / "jar-index.json").write_bytes(b"{}")
+        with self.assertRaisesRegex(jar_index.JarIndexError, "none verifies"):
+            self.recover()
+
+    def test_first_publication_bootstraps_when_nothing_exists(self):
+        self.assertEqual(self.recover()[:2], (None, False))
+        (self.release / "jar-index-5.json").write_bytes(b"{}")
+        self.assertEqual(self.recover()[:2], (None, False), "an unpaired leftover is not a publication")
+
+    def test_listed_but_undownloaded_pair_fails(self):
+        with self.assertRaisesRegex(jar_index.JarIndexError, "was not downloaded"):
+            quiet(jar_index.recover, self.release, {"jar-index.json", "jar-index.json.sig"}, self.public)
+
+    def test_cli_writes_the_recovered_index_for_the_next_steps(self):
+        self.publish_pair(10)
+        (self.release / "jar-index.json.sig").unlink()
+        assets = self.root / "assets.json"
+        assets.write_text(json.dumps([{"name": path.name, "digest": None} for path in self.release.iterdir()]),
+                          encoding="utf-8")
+        outputs = self.root / "outputs.txt"
+        code, _ = quiet(jar_index.main, ["recover", "--published", str(self.release), "--assets", str(assets),
+                                         "--public-key", self.public, "--github-output", str(outputs)])
+        self.assertEqual(code, 0)
+        lines = outputs.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines, [f"previous={(self.release / 'jar-index-10.json').as_posix()}", "canonical=false"])
 
 
 if __name__ == "__main__":

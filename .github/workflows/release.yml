@@ -112,25 +112,28 @@ jobs:
           name: jar-index-inputs
           path: jvm/build
       - name: Fetch the published indexes
+        id: published
         run: |
           mkdir -p build/published
-          gh release download latest -p index.json -D build/published
-          if gh release download latest -p jar-index.json -p jar-index.json.sig -D build/published; then
-            # Published entries are carried over verbatim, so they must carry the official signature.
-            python scripts/jar_index.py verify --index build/published/jar-index.json
-          else
-            echo "No jar-index.json published yet"
-          fi
           gh api "repos/$GH_REPO/releases/tags/latest" --jq '[.assets[] | {name, digest}]' \
             > build/published/assets.json
+          gh release download latest -p index.json -D build/published
+          # Canonical and versioned pairs; recover checks that every listed one arrived.
+          gh release download latest -p 'jar-index*' -D build/published || true
+          # Previous entries are carried over verbatim, so only a verified index is used.
+          python scripts/jar_index.py recover --published build/published \
+            --assets build/published/assets.json --github-output "$GITHUB_OUTPUT"
       # A published versionCode keeps its entry and bytes. New bytes need a higher versionCode;
       # a lower one, or a library change without dependent bumps, fails here.
       - name: Generate the index
+        id: generate
+        env:
+          PREVIOUS: ${{ steps.published.outputs.previous }}
         run: |
           python scripts/jar_index.py generate --output build/jar-index \
             --android-index build/published/index.json \
-            --previous build/published/jar-index.json \
-            --assets build/published/assets.json
+            --previous "$PREVIOUS" \
+            --assets build/published/assets.json --github-output "$GITHUB_OUTPUT"
       - name: Sign the index
         env:
           JAR_INDEX_SIGNING_KEY: ${{ secrets.JAR_INDEX_SIGNING_KEY }}
@@ -141,29 +144,47 @@ jobs:
           python scripts/jar_index.py sign --index build/jar-index/jar-index.json --key "$key"
       - name: Verify against the pinned official key
         run: python scripts/jar_index.py verify --index build/jar-index/jar-index.json
-      - name: Check that this commit is still the head of main
+      - name: Decide whether to publish
         id: head
+        env:
+          CHANGED: ${{ steps.generate.outputs.changed }}
+          CANONICAL: ${{ steps.published.outputs.canonical }}
         run: |
           head=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
-          if [ "$head" = "$GITHUB_SHA" ]; then
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ "$head" != "$GITHUB_SHA" ]; then
             echo "current=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Desktop JAR index skipped::main moved to $head; that run publishes instead."
+          elif [ "$CHANGED" = "false" ] && [ "$CANONICAL" = "true" ]; then
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Desktop JAR index unchanged::The published index already lists these artifacts."
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
           fi
-      # New JARs first, so the published index never names a missing file.
-      - name: Upload the JARs, then the index and signature
+      # Order matters for recovery: new artifacts, then the immutable versioned pair,
+      # then the canonical pair. Only the canonical pair is ever replaced.
+      - name: Upload the artifacts, then the index and signature
         if: steps.head.outputs.current == 'true'
+        env:
+          SEQUENCE: ${{ steps.generate.outputs.sequence }}
         run: |
           python scripts/jar_index.py pending --staging build/jar-index \
             --assets build/published/assets.json > build/pending.txt
           mapfile -t jars < build/pending.txt
           if [ "${#jars[@]}" -gt 0 ]; then
-            gh release upload latest "${jars[@]}" --clobber
+            gh release upload latest "${jars[@]}"
           fi
-          gh release upload latest build/jar-index/jar-index.json build/jar-index/jar-index.json.sig --clobber
+          mkdir -p build/versioned
+          cp build/jar-index/jar-index.json "build/versioned/jar-index-$SEQUENCE.json"
+          cp build/jar-index/jar-index.json.sig "build/versioned/jar-index-$SEQUENCE.json.sig"
+          gh release upload latest "build/versioned/jar-index-$SEQUENCE.json"
+          gh release upload latest "build/versioned/jar-index-$SEQUENCE.json.sig"
+          gh release upload latest build/jar-index/jar-index.json --clobber
+          gh release upload latest build/jar-index/jar-index.json.sig --clobber
+          python scripts/jar_index.py prune --assets build/published/assets.json --keep 4 > build/prune.txt
+          while read -r name; do
+            gh release delete-asset latest "$name" --yes || echo "::warning::Could not prune $name"
+          done < build/prune.txt
           {
             echo "### Desktop JAR index"
-            echo "Uploaded ${#jars[@]} changed JAR(s) and the signed jar-index.json."
-            grep -o '"sequence": [0-9]*' build/jar-index/jar-index.json
+            echo "Uploaded ${#jars[@]} new artifact(s) and signed index sequence $SEQUENCE."
           } >> "$GITHUB_STEP_SUMMARY"

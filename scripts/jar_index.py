@@ -47,6 +47,7 @@ ATTRIBUTES = {
 }
 SOURCE_INFO = re.compile(r"@SourceInfo\s*\((.*?)\)", re.DOTALL)
 COORDINATE = re.compile(r"[\w.-]+:[\w.-]+:[\w.-]+")
+VERSIONED = re.compile(r"jar-index-([1-9]\d*)\.json")
 
 
 class JarIndexError(ValueError):
@@ -168,8 +169,8 @@ def rebuilt_entries(root: Path, android_index: list | None) -> list[tuple[dict, 
 
 
 def generate(root: Path, android_index: list | None, previous: dict | None,
-             sequence: int | None = None, assets: dict | None = None) -> tuple[dict, list[Path]]:
-    """Return the index and the files that must be uploaded for it.
+             sequence: int | None = None, assets: dict | None = None) -> tuple[dict, list[tuple[Path, str]]]:
+    """Return the index and the (source, published name) files to upload for it.
 
     A published version keeps its previous entry and bytes. New bytes ship only
     with a higher versionCode, because Desktop treats an equal versionCode with
@@ -198,7 +199,7 @@ def generate(root: Path, android_index: list | None, previous: dict | None,
             new_versions.add(entry["pkg"])
         unclaimed(entry, assets)
         extensions.append(entry)
-        files.append(jar)
+        files.append((jar, entry["file"]))
     extensions.sort(key=lambda entry: entry["pkg"])
 
     libraries = []
@@ -216,6 +217,8 @@ def generate(root: Path, android_index: list | None, previous: dict | None,
                 raise JarIndexError(f"Library {coordinate} is required but {path.name} was not built")
             continue
         rebuilt = {"coordinate": coordinate, **artifact(path)}
+        # Content-addressed, so changed bytes get a new file and older indexes stay valid.
+        rebuilt["file"] = f"{name}-{version}-{rebuilt['sha256'][:12]}.jar"
         if kept and rebuilt["sha256"] == before["sha256"]:
             libraries.append(dict(before))
             continue
@@ -226,10 +229,9 @@ def generate(root: Path, android_index: list | None, previous: dict | None,
             if stale:
                 raise JarIndexError(f"{coordinate} changed; bump versionCode for: {', '.join(stale)}")
             print(f"::notice::{coordinate} changed and every dependent was bumped; publishing it")
-        else:
-            unclaimed(rebuilt, assets)
+        unclaimed(rebuilt, assets)
         libraries.append(rebuilt)
-        files.append(path)
+        files.append((path, rebuilt["file"]))
 
     now = int(time.time()) if sequence is None else sequence
     if isinstance(previous.get("sequence"), int) and previous["sequence"] >= now:
@@ -294,6 +296,70 @@ def pending(staging: Path, assets: list) -> list[Path]:
             if digests.get(path.name) != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()]
 
 
+def versioned_name(sequence: int) -> str:
+    return f"jar-index-{sequence}.json"
+
+
+def recover(directory: Path, names: set[str], public_key: str = OFFICIAL_PUBLIC_KEY) -> tuple[Path | None, bool]:
+    """Pick the newest published index whose signature verifies.
+
+    Every publication uploads an immutable jar-index-<sequence>.json pair before
+    it replaces the canonical pair, so an interrupted upload can be repaired.
+    Returns the index (None for a first publication) and whether the canonical
+    pair is that newest index.
+    """
+    indexes = sorted(name for name in names if name == INDEX_NAME or VERSIONED.fullmatch(name))
+    paired = [name for name in indexes if name + ".sig" in names]
+    for name in paired:
+        for file in (name, name + ".sig"):
+            if not (directory / file).is_file():
+                raise JarIndexError(f"{file} is on the release but was not downloaded")
+    for name in sorted(set(indexes) - set(paired)):
+        print(f"::warning::{name} has no signature on the release")
+    verified = []
+    for name in paired:
+        path = directory / name
+        if not verify(path, path.with_name(name + ".sig"), public_key):
+            print(f"::warning::{name} does not verify with the official key")
+            continue
+        sequence = json.loads(path.read_text(encoding="utf-8")).get("sequence")
+        match = VERSIONED.fullmatch(name)
+        if not isinstance(sequence, int) or (match and int(match.group(1)) != sequence):
+            print(f"::warning::{name} names a different sequence than it contains")
+            continue
+        verified.append((sequence, name == INDEX_NAME, path))
+    if verified:
+        sequence, canonical, path = max(verified)
+        if not canonical:
+            print(f"::warning::{INDEX_NAME} is missing, invalid or older; recovering from {path.name}")
+        return path, canonical
+    if paired or INDEX_NAME in names:
+        raise JarIndexError("Published JAR indexes exist but none verifies with the official key")
+    return None, False
+
+
+def unchanged(index: dict, previous: dict | None) -> bool:
+    """Everything but the sequence matches the previous index."""
+    strip = lambda value: {key: item for key, item in value.items() if key != "sequence"}
+    return previous is not None and strip(index) == strip(previous)
+
+
+def stale_versions(names: set[str], keep: int) -> list[str]:
+    """Versioned index pairs beyond the newest `keep`, oldest first."""
+    sequences = sorted(int(m.group(1)) for m in map(VERSIONED.fullmatch, names) if m)
+    old = sequences[:-keep] if keep > 0 else sequences
+    return [file for sequence in old for file in (versioned_name(sequence), versioned_name(sequence) + ".sig")
+            if file in names]
+
+
+def emit(path: str | None, **values) -> None:
+    """Append step outputs for GitHub Actions."""
+    if path:
+        with open(path, "a", encoding="utf-8", newline="\n") as output:
+            for key, value in values.items():
+                output.write(f"{key}={value}\n")
+
+
 def load_json(path: str | None):
     if not path or not Path(path).is_file():
         return None
@@ -310,6 +376,15 @@ def main(argv: list[str] | None = None) -> int:
     make.add_argument("--assets", help="JSON list of {name, digest} assets on the release")
     make.add_argument("--sequence", type=int, help="Override the epoch-seconds sequence")
     make.add_argument("--output", required=True, help="Staging directory")
+    make.add_argument("--github-output", help="Write sequence and changed step outputs here")
+    finder = commands.add_parser("recover", help="Find the newest verified published index")
+    finder.add_argument("--published", required=True, help="Directory holding the downloaded jar-index* files")
+    finder.add_argument("--assets", required=True, help="JSON list of {name, digest} release assets")
+    finder.add_argument("--public-key", default=OFFICIAL_PUBLIC_KEY)
+    finder.add_argument("--github-output", help="Write previous and canonical step outputs here")
+    pruner = commands.add_parser("prune", help="List versioned index pairs beyond the newest ones")
+    pruner.add_argument("--assets", required=True)
+    pruner.add_argument("--keep", type=int, default=4)
     signer = commands.add_parser("sign", help="Sign jar-index.json with an Ed25519 PEM key")
     signer.add_argument("--index", required=True)
     signer.add_argument("--key", required=True)
@@ -324,16 +399,27 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "generate":
+            previous = load_json(args.previous)
             index, files = generate(Path(args.repo_root), load_json(args.android_index),
-                                    load_json(args.previous), args.sequence,
-                                    asset_digests(load_json(args.assets)))
+                                    previous, args.sequence, asset_digests(load_json(args.assets)))
             output = Path(args.output)
             output.mkdir(parents=True, exist_ok=True)
-            for path in files:
-                shutil.copyfile(path, output / path.name)
+            for path, name in files:
+                shutil.copyfile(path, output / name)
             (output / INDEX_NAME).write_bytes(encode(index))
+            changed = not unchanged(index, previous)
+            emit(args.github_output, sequence=index["sequence"], changed=str(changed).lower())
             print(f"{INDEX_NAME}: {len(index['extensions'])} extension(s), "
-                  f"{len(index['libraries'])} library(ies), sequence {index['sequence']}")
+                  f"{len(index['libraries'])} library(ies), sequence {index['sequence']}, "
+                  f"{len(files)} new file(s), {'changed' if changed else 'unchanged'}")
+        elif args.command == "recover":
+            names = set(asset_digests(load_json(args.assets)))
+            path, canonical = recover(Path(args.published), names, args.public_key)
+            emit(args.github_output, previous=path.as_posix() if path else "", canonical=str(canonical).lower())
+            print(f"Previous index: {path.name if path else 'none (first publication)'}")
+        elif args.command == "prune":
+            for name in stale_versions(set(asset_digests(load_json(args.assets))), args.keep):
+                print(name)
         elif args.command == "sign":
             print(f"Signed: {sign(Path(args.index), Path(args.key))}")
         elif args.command == "verify":

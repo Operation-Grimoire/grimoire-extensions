@@ -162,15 +162,33 @@ The format is defined in the app's
 1. `jar-index-build` runs the script tests and `build_dual.py --jars-only` with
    a read-only token and the pinned API.
 2. `jar-index-publish` runs in the `jar-index-publication` concurrency group.
-   It verifies the previously published index with the pinned key, then
-   `scripts/jar_index.py generate` writes `jar-index.json` (policy below). `sign`
-   signs it with `openssl pkeyutl -sign -rawin` and the `JAR_INDEX_SIGNING_KEY`
-   secret (PEM PKCS#8 Ed25519). `verify` then checks it against the pinned
-   official public key `PYUsj2AvddEkNAiO8Vc2tPskScoilyAdbMG8ZNN/IfM=`. A
-   different key fails the job.
-3. New JARs upload first, then `jar-index.json` and `jar-index.json.sig`.
-   Nothing is published when `main` has moved on, or when the secret is unset.
-   An unset secret only adds a notice. It does not fail the Android release.
+   `scripts/jar_index.py recover` chooses the previous index (recovery below).
+   `generate` writes `jar-index.json` (policy below). `sign` signs it with
+   `openssl pkeyutl -sign -rawin` and the `JAR_INDEX_SIGNING_KEY` secret (PEM
+   PKCS#8 Ed25519). `verify` then checks it against the pinned official public
+   key `PYUsj2AvddEkNAiO8Vc2tPskScoilyAdbMG8ZNN/IfM=`. A different key fails the
+   job.
+3. Uploads run in this order: new artifacts, then the immutable pair
+   `jar-index-<sequence>.json` and `jar-index-<sequence>.json.sig`, then
+   `jar-index.json` and `jar-index.json.sig`. Only the canonical pair is ever
+   replaced. Versioned pairs beyond the newest five are deleted afterwards.
+   Nothing is published in these cases:
+   - `main` has moved on;
+   - the index is unchanged apart from its sequence and the canonical pair is
+     current;
+   - the secret is unset. This only adds a notice and does not fail the Android
+     release.
+
+Recovery. `recover` verifies the canonical pair and every versioned pair with
+the pinned key, then uses the verifying index with the highest sequence. A
+versioned pair must also contain the sequence its file name states. When the
+canonical pair is missing, mismatched or older, the job logs a warning, uses
+that versioned pair, and republishes the canonical pair. A rerun after an
+interrupted upload therefore repairs the release.
+
+A first publication starts only when no pair and no canonical index exist. If
+pairs exist but none verifies, the job fails. Index files without a signature
+are ignored with a warning.
 
 Desktop treats an equal `versionCode` with a different `sha256` as a conflict.
 For that reason, published bytes never change under the same version:
@@ -188,10 +206,12 @@ For that reason, published bytes never change under the same version:
 - **Changed library.** If the shared library's rebuilt bytes differ from the
   published entry, every extension that lists its coordinate in
   `hostLibraries` must have a higher `versionCode`. Otherwise the job fails and
-  names the extensions to bump. Each coordinate has exactly one library file.
+  names the extensions to bump. Each index lists one library per coordinate.
+  The library file name is content-addressed, as
+  `extensions-lib-<version>-<first 12 hex of sha256>.jar`. A changed library is
+  therefore a new file, and older indexes keep pointing at their own bytes.
 - **Name collision.** New bytes never replace a release asset of the same name
-  with different bytes, unless they are an allowed library change. A collision
-  fails the job.
+  with different bytes. A collision fails the job.
 
 Field sources:
 
@@ -202,7 +222,7 @@ Field sources:
 | `name`, `adultContent` | `@SourceInfo`, as in the Android index generator. |
 | `lang` | A string `@SourceInfo` lang, otherwise the `src/<language>` directory, as in `index.json`. |
 | `iconUrl` | The same package's `iconUrl` in the published `index.json`. Left out with a warning when absent. |
-| `libraries` | Each `io.grimoire` host library coordinate, mapped to its JAR in `jvm/build/host`. `org.json` is supplied by the host. |
+| `libraries` | Each `io.grimoire` host library coordinate, mapped to its JAR in `jvm/build/host`. The published `file` is content-addressed. `org.json` is supplied by the host. |
 | `sequence` | Generation time in epoch seconds. Always above the previously published value. |
 
 On `main`, `lib` still builds as `io.grimoire:extensions-lib:1.0.0-SNAPSHOT`.

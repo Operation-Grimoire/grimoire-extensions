@@ -189,11 +189,22 @@ def generate(root: Path, android_index: list | None, previous: dict | None,
             if entry["versionCode"] < before["versionCode"]:
                 raise JarIndexError(f"{entry['pkg']} versionCode {entry['versionCode']} is below the "
                                     f"published {before['versionCode']}")
-            if entry["versionCode"] == before["versionCode"] and published(before, assets):
+            if entry["versionCode"] == before["versionCode"]:
+                if published(before, assets):
+                    if entry["sha256"] != before["sha256"]:
+                        print(f"::notice::{entry['pkg']} {before['versionName']} rebuilt with different bytes; "
+                              "keeping the published JAR")
+                    extensions.append(dict(before))
+                    continue
+                # The asset is gone or replaced: restore it only with the exact signed bytes.
+                unclaimed(entry, assets)
                 if entry["sha256"] != before["sha256"]:
-                    print(f"::notice::{entry['pkg']} {before['versionName']} rebuilt with different bytes; "
-                          "keeping the published JAR")
-                extensions.append(dict(before))
+                    raise JarIndexError(f"{before['file']} is missing and its rebuild differs; "
+                                        f"bump versionCode for {entry['pkg']}")
+                restored = dict(before)
+                unclaimed(restored, assets)
+                extensions.append(restored)
+                files.append((jar, restored["file"]))
                 continue
         if not before or entry["versionCode"] > before["versionCode"]:
             new_versions.add(entry["pkg"])
@@ -219,10 +230,16 @@ def generate(root: Path, android_index: list | None, previous: dict | None,
         rebuilt = {"coordinate": coordinate, **artifact(path)}
         # Content-addressed, so changed bytes get a new file and older indexes stay valid.
         rebuilt["file"] = f"{name}-{version}-{rebuilt['sha256'][:12]}.jar"
-        if kept and rebuilt["sha256"] == before["sha256"]:
-            libraries.append(dict(before))
+        if before is not None and rebuilt["sha256"] == before["sha256"]:
+            restored = dict(before)
+            if not kept:
+                # The asset is gone but the rebuild is identical: restore it under its signed name.
+                unclaimed(restored, assets)
+                files.append((path, restored["file"]))
+            libraries.append(restored)
             continue
-        if kept:
+        # Compare with the signed previous entry even when its asset is missing.
+        if before is not None:
             # One library per coordinate: every dependent must ship a new version with it.
             stale = sorted(entry["pkg"] for entry in extensions
                            if coordinate in entry["hostLibraries"] and entry["pkg"] not in new_versions)

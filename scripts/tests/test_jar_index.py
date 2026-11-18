@@ -174,13 +174,17 @@ class JarIndexTest(unittest.TestCase):
         with self.assertRaisesRegex(jar_index.JarIndexError, "below the published 4"):
             self.publish(self.root / "new", previous, release_assets(previous))
 
-    def test_missing_previous_asset_publishes_the_rebuilt_bytes(self):
+    def test_missing_previous_asset_with_different_bytes_requires_a_bump(self):
         fixture = write_extension(self.root / "old", "en", "fixture")
         previous, _, _ = self.publish(self.root / "old")
         rebuild_with_new_bytes(fixture)
-        index, files, _ = self.publish(self.root / "old", previous, {})
-        self.assertEqual(index["extensions"][0]["sha256"], hashlib.sha256(fixture["jar"].read_bytes()).hexdigest())
-        self.assertEqual(files, [fixture["jar"]])
+        # Same versionCode, different bytes: Desktop would see a conflict, so never publish it.
+        with self.assertRaisesRegex(jar_index.JarIndexError, "is missing and its rebuild differs; bump versionCode"):
+            self.publish(self.root / "old", previous, {})
+        bumped = write_extension(self.root / "new", "en", "fixture", 4)
+        index, files, _ = self.publish(self.root / "new", previous, {})
+        self.assertEqual(index["extensions"][0]["sha256"], hashlib.sha256(bumped["jar"].read_bytes()).hexdigest())
+        self.assertEqual(files, [bumped["jar"]])
 
     def test_new_bytes_never_replace_a_different_asset_of_the_same_name(self):
         fixture = write_extension(self.root / "old", "en", "fixture")
@@ -254,6 +258,16 @@ class JarIndexTest(unittest.TestCase):
         index, (missing, new_index) = self.plan(previous, assets)
         self.assertTrue(jar_index.unchanged(index, previous))
         self.assertEqual((missing, new_index), ([fixture["jar"].name], False))
+
+    def test_missing_library_with_different_bytes_still_requires_dependent_bumps(self):
+        write_extension(self.root, "en", "alpha", uses_lib=True)
+        write_library(self.root)
+        previous, _, _ = self.publish(self.root)
+        assets = release_assets(previous)
+        del assets[previous["libraries"][0]["file"]]
+        write_library(self.root, b"changed")
+        with self.assertRaisesRegex(jar_index.JarIndexError, "changed; bump versionCode for: io.grimoire.extension.en.alpha"):
+            self.publish(self.root, previous, assets)
 
     def test_missing_library_is_restored_without_a_new_index(self):
         write_extension(self.root, "en", "alpha", uses_lib=True)

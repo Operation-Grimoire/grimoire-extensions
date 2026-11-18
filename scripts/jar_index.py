@@ -344,6 +344,17 @@ def unchanged(index: dict, previous: dict | None) -> bool:
     return previous is not None and strip(index) == strip(previous)
 
 
+def publication(index: dict, previous: dict | None, canonical: bool, files: list[tuple[Path, str]],
+                assets: dict) -> tuple[list[str], bool]:
+    """Staged artifacts the release lacks, and whether a new index pair is needed.
+
+    A missing asset is restored even when the index itself is unchanged.
+    """
+    missing = [name for path, name in files
+               if assets.get(name) != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()]
+    return missing, not (canonical and unchanged(index, previous))
+
+
 def stale_versions(names: set[str], keep: int) -> list[str]:
     """Versioned index pairs beyond the newest `keep`, oldest first."""
     sequences = sorted(int(m.group(1)) for m in map(VERSIONED.fullmatch, names) if m)
@@ -376,7 +387,9 @@ def main(argv: list[str] | None = None) -> int:
     make.add_argument("--assets", help="JSON list of {name, digest} assets on the release")
     make.add_argument("--sequence", type=int, help="Override the epoch-seconds sequence")
     make.add_argument("--output", required=True, help="Staging directory")
-    make.add_argument("--github-output", help="Write sequence and changed step outputs here")
+    make.add_argument("--canonical", choices=("true", "false"), default="false",
+                      help="Whether the canonical pair is the previous index (from recover)")
+    make.add_argument("--github-output", help="Write sequence, artifacts and index step outputs here")
     finder = commands.add_parser("recover", help="Find the newest verified published index")
     finder.add_argument("--published", required=True, help="Directory holding the downloaded jar-index* files")
     finder.add_argument("--assets", required=True, help="JSON list of {name, digest} release assets")
@@ -400,18 +413,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "generate":
             previous = load_json(args.previous)
+            assets = asset_digests(load_json(args.assets))
             index, files = generate(Path(args.repo_root), load_json(args.android_index),
-                                    previous, args.sequence, asset_digests(load_json(args.assets)))
+                                    previous, args.sequence, assets)
             output = Path(args.output)
             output.mkdir(parents=True, exist_ok=True)
             for path, name in files:
                 shutil.copyfile(path, output / name)
             (output / INDEX_NAME).write_bytes(encode(index))
-            changed = not unchanged(index, previous)
-            emit(args.github_output, sequence=index["sequence"], changed=str(changed).lower())
+            missing, new_index = publication(index, previous, args.canonical == "true", files, assets)
+            emit(args.github_output, sequence=index["sequence"], artifacts=str(bool(missing)).lower(),
+                 index=str(new_index).lower())
             print(f"{INDEX_NAME}: {len(index['extensions'])} extension(s), "
                   f"{len(index['libraries'])} library(ies), sequence {index['sequence']}, "
-                  f"{len(files)} new file(s), {'changed' if changed else 'unchanged'}")
+                  f"{len(missing)} artifact(s) to upload, "
+                  f"{'new index pair' if new_index else 'canonical pair is current'}")
         elif args.command == "recover":
             names = set(asset_digests(load_json(args.assets)))
             path, canonical = recover(Path(args.published), names, args.public_key)

@@ -172,10 +172,15 @@ The format is defined in the app's
    `jar-index-<sequence>.json` and `jar-index-<sequence>.json.sig`, then
    `jar-index.json` and `jar-index.json.sig`. Only the canonical pair is ever
    replaced. Versioned pairs beyond the newest five are deleted afterwards.
+   Two decisions are made separately:
+   - Artifacts the index lists but the release lacks are uploaded, even when
+     the index is otherwise unchanged.
+   - A new index pair is published only when the index changed apart from its
+     sequence, or when the canonical pair is not current.
+
    Nothing is published in these cases:
    - `main` has moved on;
-   - the index is unchanged apart from its sequence and the canonical pair is
-     current;
+   - the release already holds the current index and every artifact it lists;
    - the secret is unset. This only adds a notice and does not fail the Android
      release.
 

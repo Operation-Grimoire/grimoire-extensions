@@ -129,10 +129,11 @@ jobs:
         id: generate
         env:
           PREVIOUS: ${{ steps.published.outputs.previous }}
+          CANONICAL: ${{ steps.published.outputs.canonical }}
         run: |
           python scripts/jar_index.py generate --output build/jar-index \
             --android-index build/published/index.json \
-            --previous "$PREVIOUS" \
+            --previous "$PREVIOUS" --canonical "$CANONICAL" \
             --assets build/published/assets.json --github-output "$GITHUB_OUTPUT"
       - name: Sign the index
         env:
@@ -144,35 +145,37 @@ jobs:
           python scripts/jar_index.py sign --index build/jar-index/jar-index.json --key "$key"
       - name: Verify against the pinned official key
         run: python scripts/jar_index.py verify --index build/jar-index/jar-index.json
-      - name: Decide whether to publish
-        id: head
+      # Missing artifacts are restored even when the index itself is unchanged.
+      - name: Decide what to publish
+        id: plan
         env:
-          CHANGED: ${{ steps.generate.outputs.changed }}
-          CANONICAL: ${{ steps.published.outputs.canonical }}
+          ARTIFACTS: ${{ steps.generate.outputs.artifacts }}
+          INDEX: ${{ steps.generate.outputs.index }}
         run: |
           head=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
           if [ "$head" != "$GITHUB_SHA" ]; then
-            echo "current=false" >> "$GITHUB_OUTPUT"
+            ARTIFACTS=false INDEX=false
             echo "::notice title=Desktop JAR index skipped::main moved to $head; that run publishes instead."
-          elif [ "$CHANGED" = "false" ] && [ "$CANONICAL" = "true" ]; then
-            echo "current=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Desktop JAR index unchanged::The published index already lists these artifacts."
-          else
-            echo "current=true" >> "$GITHUB_OUTPUT"
+          elif [ "$ARTIFACTS" = "false" ] && [ "$INDEX" = "false" ]; then
+            echo "::notice title=Desktop JAR index unchanged::The release already holds this index and its artifacts."
           fi
-      # Order matters for recovery: new artifacts, then the immutable versioned pair,
+          echo "artifacts=$ARTIFACTS" >> "$GITHUB_OUTPUT"
+          echo "index=$INDEX" >> "$GITHUB_OUTPUT"
+      # Order matters for recovery: artifacts, then the immutable versioned pair,
       # then the canonical pair. Only the canonical pair is ever replaced.
-      - name: Upload the artifacts, then the index and signature
-        if: steps.head.outputs.current == 'true'
-        env:
-          SEQUENCE: ${{ steps.generate.outputs.sequence }}
+      - name: Upload missing artifacts
+        if: steps.plan.outputs.artifacts == 'true'
         run: |
           python scripts/jar_index.py pending --staging build/jar-index \
             --assets build/published/assets.json > build/pending.txt
           mapfile -t jars < build/pending.txt
-          if [ "${#jars[@]}" -gt 0 ]; then
-            gh release upload latest "${jars[@]}"
-          fi
+          gh release upload latest "${jars[@]}"
+          echo "Uploaded ${#jars[@]} artifact(s): ${jars[*]##*/}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish the index and signature
+        if: steps.plan.outputs.index == 'true'
+        env:
+          SEQUENCE: ${{ steps.generate.outputs.sequence }}
+        run: |
           mkdir -p build/versioned
           cp build/jar-index/jar-index.json "build/versioned/jar-index-$SEQUENCE.json"
           cp build/jar-index/jar-index.json.sig "build/versioned/jar-index-$SEQUENCE.json.sig"
@@ -184,7 +187,4 @@ jobs:
           while read -r name; do
             gh release delete-asset latest "$name" --yes || echo "::warning::Could not prune $name"
           done < build/prune.txt
-          {
-            echo "### Desktop JAR index"
-            echo "Uploaded ${#jars[@]} new artifact(s) and signed index sequence $SEQUENCE."
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Published signed Desktop JAR index sequence $SEQUENCE." >> "$GITHUB_STEP_SUMMARY"

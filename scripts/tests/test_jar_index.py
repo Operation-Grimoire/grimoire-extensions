@@ -242,6 +242,57 @@ class JarIndexTest(unittest.TestCase):
         self.assertEqual(files, [])
         self.assertTrue(jar_index.unchanged(index, previous))
 
+    def plan(self, previous: dict, assets: dict, canonical: bool = True):
+        (index, files), _ = quiet(jar_index.generate, self.root, [], previous, 20, assets)
+        return index, jar_index.publication(index, previous, canonical, files, assets)
+
+    def test_missing_extension_jar_is_restored_without_a_new_index(self):
+        fixture = write_extension(self.root, "en", "fixture")
+        previous, _, _ = self.publish(self.root)
+        assets = release_assets(previous)
+        del assets[fixture["jar"].name]
+        index, (missing, new_index) = self.plan(previous, assets)
+        self.assertTrue(jar_index.unchanged(index, previous))
+        self.assertEqual((missing, new_index), ([fixture["jar"].name], False))
+
+    def test_missing_library_is_restored_without_a_new_index(self):
+        write_extension(self.root, "en", "alpha", uses_lib=True)
+        write_library(self.root)
+        previous, _, _ = self.publish(self.root)
+        assets = release_assets(previous)
+        library = previous["libraries"][0]["file"]
+        del assets[library]
+        index, (missing, new_index) = self.plan(previous, assets)
+        self.assertEqual(index["libraries"], previous["libraries"])
+        self.assertEqual((missing, new_index), ([library], False))
+
+    def test_unchanged_run_publishes_nothing(self):
+        write_extension(self.root, "en", "alpha", uses_lib=True)
+        write_library(self.root)
+        previous, _, _ = self.publish(self.root)
+        _, plan = self.plan(previous, release_assets(previous))
+        self.assertEqual(plan, ([], False))
+        # A stale canonical pair still needs a new index pair, with nothing else to upload.
+        _, plan = self.plan(previous, release_assets(previous), canonical=False)
+        self.assertEqual(plan, ([], True))
+
+    def test_generate_reports_the_publication_plan(self):
+        fixture = write_extension(self.root, "en", "fixture")
+        previous, _, _ = self.publish(self.root)
+        (self.root / "previous.json").write_bytes(jar_index.encode(previous))
+        assets = [{"name": name, "digest": digest} for name, digest in release_assets(previous).items()
+                  if name != fixture["jar"].name]
+        (self.root / "assets.json").write_text(json.dumps(assets), encoding="utf-8")
+        outputs = self.root / "outputs.txt"
+        code, _ = quiet(jar_index.main, ["generate", "--repo-root", str(self.root), "--output", str(self.root / "out"),
+                                         "--previous", str(self.root / "previous.json"), "--canonical", "true",
+                                         "--assets", str(self.root / "assets.json"), "--sequence", "30",
+                                         "--github-output", str(outputs)])
+        self.assertEqual(code, 0)
+        self.assertEqual(outputs.read_text(encoding="utf-8").splitlines(),
+                         ["sequence=30", "artifacts=true", "index=false"])
+        self.assertTrue((self.root / "out" / fixture["jar"].name).is_file())
+
     def test_library_file_name_is_content_addressed(self):
         write_extension(self.root, "en", "alpha", uses_lib=True)
         library = write_library(self.root)

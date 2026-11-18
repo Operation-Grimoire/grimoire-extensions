@@ -50,13 +50,25 @@ def write_extension(root: Path, lang: str, name: str, version_code: int = 3, *, 
     return {"jar": jar, "package": package, "headers": headers}
 
 
-def write_library(root: Path) -> Path:
+def write_library(root: Path, content: bytes = b"lib") -> Path:
     host = root / "jvm/build/host"
     host.mkdir(parents=True, exist_ok=True)
     path = host / "extensions-lib-1.0.0-SNAPSHOT.jar"
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("io/grimoire/extensions/lib/Base.class", b"lib")
+        archive.writestr("io/grimoire/extensions/lib/Base.class", content)
     return path
+
+
+def rebuild_with_new_bytes(fixture: dict) -> None:
+    """Same identity, different bytes, as after a compiler or library change."""
+    with zipfile.ZipFile(fixture["jar"], "a") as archive:
+        archive.writestr(fixture["package"].replace(".", "/") + "/Extra.class", bytes.fromhex("cafebabe00000037"))
+
+
+def release_assets(index: dict) -> dict:
+    """Asset digests of a release that holds every file the index names."""
+    entries = index["extensions"] + index["libraries"]
+    return {entry["file"]: "sha256:" + entry["sha256"] for entry in entries}
 
 
 def quiet(function, *args, **kwargs):
@@ -129,13 +141,98 @@ class JarIndexTest(unittest.TestCase):
         (index, _), _ = quiet(jar_index.generate, self.root, [], {"sequence": 900}, 1000)
         self.assertEqual(index["sequence"], 1000)
 
-    def test_same_version_with_new_bytes_is_reported(self):
-        write_extension(self.root, "en", "fixture")
-        (index, _), _ = quiet(jar_index.generate, self.root, [], None, 1)
-        previous = json.loads(json.dumps(index))
-        previous["extensions"][0]["sha256"] = "0" * 64
-        _, output = quiet(jar_index.generate, self.root, [], previous, 2)
-        self.assertIn("::warning::io.grimoire.extension.en.fixture 1.0.2 changed bytes", output)
+    def publish(self, root: Path, previous: dict | None = None, assets: dict | None = None):
+        (index, files), output = quiet(jar_index.generate, root, [], previous, 10, assets)
+        return index, files, output
+
+    def test_published_version_keeps_its_entry_and_skips_upload(self):
+        fixture = write_extension(self.root / "old", "en", "fixture")
+        previous, _, _ = self.publish(self.root / "old")
+        rebuild_with_new_bytes(fixture)
+        index, files, output = self.publish(self.root / "old", previous, release_assets(previous))
+        self.assertEqual(index["extensions"], previous["extensions"])
+        self.assertEqual(files, [])
+        self.assertIn("::notice::io.grimoire.extension.en.fixture 1.0.2 rebuilt with different bytes", output)
+        self.assertGreater(index["sequence"], previous["sequence"])
+
+    def test_bumped_version_publishes_new_bytes(self):
+        write_extension(self.root / "old", "en", "fixture", 3)
+        previous, _, _ = self.publish(self.root / "old")
+        bumped = write_extension(self.root / "new", "en", "fixture", 4)
+        index, files, _ = self.publish(self.root / "new", previous, release_assets(previous))
+        entry, = index["extensions"]
+        self.assertEqual((entry["versionCode"], entry["file"]), (4, bumped["jar"].name))
+        self.assertEqual(entry["sha256"], hashlib.sha256(bumped["jar"].read_bytes()).hexdigest())
+        self.assertEqual(files, [bumped["jar"]])
+
+    def test_lower_version_than_published_fails(self):
+        write_extension(self.root / "old", "en", "fixture", 4)
+        previous, _, _ = self.publish(self.root / "old")
+        write_extension(self.root / "new", "en", "fixture", 3)
+        with self.assertRaisesRegex(jar_index.JarIndexError, "below the published 4"):
+            self.publish(self.root / "new", previous, release_assets(previous))
+
+    def test_missing_previous_asset_publishes_the_rebuilt_bytes(self):
+        fixture = write_extension(self.root / "old", "en", "fixture")
+        previous, _, _ = self.publish(self.root / "old")
+        rebuild_with_new_bytes(fixture)
+        index, files, _ = self.publish(self.root / "old", previous, {})
+        self.assertEqual(index["extensions"][0]["sha256"], hashlib.sha256(fixture["jar"].read_bytes()).hexdigest())
+        self.assertEqual(files, [fixture["jar"]])
+
+    def test_new_bytes_never_replace_a_different_asset_of_the_same_name(self):
+        fixture = write_extension(self.root / "old", "en", "fixture")
+        previous, _, _ = self.publish(self.root / "old")
+        rebuild_with_new_bytes(fixture)
+        # The recorded digest no longer matches the asset, so it is not pinned either.
+        with self.assertRaisesRegex(jar_index.JarIndexError, "already exists on the release"):
+            self.publish(self.root / "old", previous, {fixture["jar"].name: "sha256:" + "1" * 64})
+        bumped = write_extension(self.root / "new", "en", "fixture", 4)
+        with self.assertRaisesRegex(jar_index.JarIndexError, "already exists on the release"):
+            self.publish(self.root / "new", previous,
+                         {**release_assets(previous), bumped["jar"].name: "sha256:" + "2" * 64})
+
+    def test_library_change_without_dependent_bumps_fails(self):
+        old = self.root / "old"
+        write_extension(old, "en", "alpha", 3, uses_lib=True)
+        write_extension(old, "en", "beta", 5, uses_lib=True)
+        write_extension(old, "en", "plain", 2)
+        write_library(old)
+        previous, _, _ = self.publish(old)
+        new = self.root / "new"
+        write_extension(new, "en", "alpha", 4, uses_lib=True)
+        write_extension(new, "en", "beta", 5, uses_lib=True)
+        write_extension(new, "en", "plain", 2)
+        write_library(new, b"changed")
+        with self.assertRaises(jar_index.JarIndexError) as raised:
+            self.publish(new, previous, release_assets(previous))
+        self.assertIn("bump versionCode for: io.grimoire.extension.en.beta", str(raised.exception))
+        self.assertNotIn("alpha", str(raised.exception))
+        self.assertNotIn("plain", str(raised.exception))
+
+    def test_library_change_with_every_dependent_bumped_publishes(self):
+        old = self.root / "old"
+        write_extension(old, "en", "alpha", 3, uses_lib=True)
+        write_extension(old, "en", "plain", 2)
+        write_library(old)
+        previous, _, _ = self.publish(old)
+        new = self.root / "new"
+        alpha = write_extension(new, "en", "alpha", 4, uses_lib=True)
+        write_extension(new, "en", "plain", 2)
+        library = write_library(new, b"changed")
+        index, files, _ = self.publish(new, previous, release_assets(previous))
+        self.assertEqual(index["libraries"][0]["sha256"], hashlib.sha256(library.read_bytes()).hexdigest())
+        self.assertEqual(files, [alpha["jar"], library])
+        self.assertEqual([e["sha256"] for e in index["extensions"] if e["pkg"].endswith("plain")],
+                         [e["sha256"] for e in previous["extensions"] if e["pkg"].endswith("plain")])
+
+    def test_unchanged_library_is_not_uploaded_again(self):
+        write_extension(self.root, "en", "alpha", uses_lib=True)
+        write_library(self.root)
+        previous, _, _ = self.publish(self.root)
+        index, files, _ = self.publish(self.root, previous, release_assets(previous))
+        self.assertEqual(index["libraries"], previous["libraries"])
+        self.assertEqual(files, [])
 
     def test_rejects_artifacts_over_twenty_mebibytes(self):
         self.assertEqual(jar_index.MAX_ARTIFACT_BYTES, 20 * 1024 * 1024)

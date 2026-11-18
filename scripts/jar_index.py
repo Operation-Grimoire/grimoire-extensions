@@ -5,6 +5,8 @@ jvm/build/extensions. Identity fields come from each JAR's Grimoire-* manifest
 and must equal the identity.json written beside it. name, lang and adultContent
 come from @SourceInfo, read the same way the Android index generator reads them.
 iconUrl is copied from the published Android index.json.
+
+A version that is already published keeps its entry and bytes; see generate().
 """
 from __future__ import annotations
 
@@ -116,25 +118,33 @@ def positive(value: str, label: str) -> int:
     return int(value)
 
 
-def generate(root: Path, android_index: list | None, previous: dict | None,
-             sequence: int | None = None) -> tuple[dict, list[Path]]:
-    """Return the index and every file it references."""
+def published(entry: dict, assets: dict) -> bool:
+    """The release still holds this entry's file with the recorded digest."""
+    return assets.get(entry.get("file")) == f"sha256:{entry.get('sha256')}"
+
+
+def unclaimed(entry: dict, assets: dict) -> None:
+    """New bytes may not replace a different asset of the same name."""
+    existing = assets.get(entry["file"])
+    if existing and existing != f"sha256:{entry['sha256']}":
+        raise JarIndexError(f"{entry['file']} already exists on the release with different bytes")
+
+
+def rebuilt_entries(root: Path, android_index: list | None) -> list[tuple[dict, Path]]:
     icons = {entry["pkg"]: entry["iconUrl"] for entry in android_index or []
              if isinstance(entry, dict) and str(entry.get("iconUrl", "")).startswith("https://")}
-    build = root / "jvm" / "build"
-    extensions, files, required = [], [], set()
     directories = extension_dirs(root)
     if not directories:
         raise JarIndexError(f"No extension directories under {root / 'src'}")
+    entries = []
     for directory in directories:
         language = directory.parent.name
         module = f"{language}-{directory.name}"
-        jar, values = jar_identity(build / "extensions" / module, module)
+        jar, values = jar_identity(root / "jvm/build/extensions" / module, module)
         libraries = [item.strip() for item in values["hostLibraries"].split(",") if item.strip()]
         for coordinate in libraries:
             if not COORDINATE.fullmatch(coordinate):
                 raise JarIndexError(f"{module} declares malformed host library {coordinate}")
-        required.update(libraries)
         meta = source_metadata(directory, language)
         entry = {
             "pkg": values["package"], "name": meta["name"], "lang": meta["lang"],
@@ -150,48 +160,87 @@ def generate(root: Path, android_index: list | None, previous: dict | None,
             entry["iconUrl"] = icons[entry["pkg"]]
         else:
             print(f"::warning::{module} has no iconUrl in the Android index")
-        extensions.append(entry)
-        files.append(jar)
-    packages = [entry["pkg"] for entry in extensions]
+        entries.append((entry, jar))
+    packages = [entry["pkg"] for entry, _ in entries]
     if len(set(packages)) != len(packages):
         raise JarIndexError("Two extensions declare the same package")
+    return entries
+
+
+def generate(root: Path, android_index: list | None, previous: dict | None,
+             sequence: int | None = None, assets: dict | None = None) -> tuple[dict, list[Path]]:
+    """Return the index and the files that must be uploaded for it.
+
+    A published version keeps its previous entry and bytes. New bytes ship only
+    with a higher versionCode, because Desktop treats an equal versionCode with
+    another digest as a conflict.
+    """
+    assets = assets or {}
+    previous = previous or {}
+    old_extensions = {entry["pkg"]: entry for entry in previous.get("extensions", [])
+                      if isinstance(entry, dict) and "pkg" in entry}
+    old_libraries = {entry["coordinate"]: entry for entry in previous.get("libraries", [])
+                     if isinstance(entry, dict) and "coordinate" in entry}
+    extensions, files, new_versions = [], [], set()
+    for entry, jar in rebuilt_entries(root, android_index):
+        before = old_extensions.get(entry["pkg"])
+        if before:
+            if entry["versionCode"] < before["versionCode"]:
+                raise JarIndexError(f"{entry['pkg']} versionCode {entry['versionCode']} is below the "
+                                    f"published {before['versionCode']}")
+            if entry["versionCode"] == before["versionCode"] and published(before, assets):
+                if entry["sha256"] != before["sha256"]:
+                    print(f"::notice::{entry['pkg']} {before['versionName']} rebuilt with different bytes; "
+                          "keeping the published JAR")
+                extensions.append(dict(before))
+                continue
+        if not before or entry["versionCode"] > before["versionCode"]:
+            new_versions.add(entry["pkg"])
+        unclaimed(entry, assets)
+        extensions.append(entry)
+        files.append(jar)
     extensions.sort(key=lambda entry: entry["pkg"])
 
-    library_entries = []
-    for coordinate in sorted(required):
+    libraries = []
+    for coordinate in sorted({c for entry in extensions for c in entry["hostLibraries"]}):
+        if not COORDINATE.fullmatch(coordinate):
+            raise JarIndexError(f"Malformed host library {coordinate}")
         _, name, version = coordinate.split(":")
-        path = build / "host" / f"{name}-{version}.jar"
-        if path.is_file():
-            library_entries.append({"coordinate": coordinate, **artifact(path)})
-            files.append(path)
-        elif coordinate not in HOST_PROVIDED:
-            raise JarIndexError(f"Library {coordinate} is required but {path.name} was not built")
+        path = root / "jvm/build/host" / f"{name}-{version}.jar"
+        before = old_libraries.get(coordinate)
+        kept = before is not None and published(before, assets)
+        if not path.is_file():
+            if kept:
+                libraries.append(dict(before))
+            elif coordinate not in HOST_PROVIDED:
+                raise JarIndexError(f"Library {coordinate} is required but {path.name} was not built")
+            continue
+        rebuilt = {"coordinate": coordinate, **artifact(path)}
+        if kept and rebuilt["sha256"] == before["sha256"]:
+            libraries.append(dict(before))
+            continue
+        if kept:
+            # One library per coordinate: every dependent must ship a new version with it.
+            stale = sorted(entry["pkg"] for entry in extensions
+                           if coordinate in entry["hostLibraries"] and entry["pkg"] not in new_versions)
+            if stale:
+                raise JarIndexError(f"{coordinate} changed; bump versionCode for: {', '.join(stale)}")
+            print(f"::notice::{coordinate} changed and every dependent was bumped; publishing it")
+        else:
+            unclaimed(rebuilt, assets)
+        libraries.append(rebuilt)
+        files.append(path)
 
     now = int(time.time()) if sequence is None else sequence
-    if previous and isinstance(previous.get("sequence"), int) and previous["sequence"] >= now:
+    if isinstance(previous.get("sequence"), int) and previous["sequence"] >= now:
         now = previous["sequence"] + 1
     index = {"format": 1, "repository": REPOSITORY, "sequence": now,
-             "libraries": library_entries, "extensions": extensions}
-    for warning in drift(previous, index):
-        print(f"::warning::{warning}")
+             "libraries": libraries, "extensions": extensions}
     return index, files
 
 
-def drift(previous: dict | None, index: dict) -> list[str]:
-    """Same-version artifacts whose bytes changed, and version regressions."""
-    if not previous:
-        return []
-    warnings = []
-    old = {entry.get("pkg"): entry for entry in previous.get("extensions", []) if isinstance(entry, dict)}
-    for entry in index["extensions"]:
-        before = old.get(entry["pkg"])
-        if not before:
-            continue
-        if entry["versionCode"] == before.get("versionCode") and entry["sha256"] != before.get("sha256"):
-            warnings.append(f"{entry['pkg']} {entry['versionName']} changed bytes without a versionCode bump")
-        elif entry["versionCode"] < before.get("versionCode", 0):
-            warnings.append(f"{entry['pkg']} versionCode went down from {before.get('versionCode')}")
-    return warnings
+def asset_digests(assets: list | None) -> dict:
+    return {asset.get("name"): asset.get("digest") for asset in assets or [] if isinstance(asset, dict)}
 
 
 def encode(index: dict) -> bytes:
@@ -223,7 +272,7 @@ def verify(index_path: Path, signature_path: Path, public_key: str) -> bool:
     try:
         key = base64.b64decode(public_key.strip(), validate=True)
         signature = base64.b64decode(signature_path.read_bytes().strip(), validate=True)
-    except ValueError:
+    except (OSError, ValueError):
         return False
     if len(key) != 32 or len(signature) != 64:
         return False
@@ -240,9 +289,9 @@ def verify(index_path: Path, signature_path: Path, public_key: str) -> bool:
 
 def pending(staging: Path, assets: list) -> list[Path]:
     """Artifacts that are missing from the release or differ from the asset there."""
-    published = {asset.get("name"): asset.get("digest") for asset in assets if isinstance(asset, dict)}
+    digests = asset_digests(assets)
     return [path for path in sorted(staging.glob("*.jar"))
-            if published.get(path.name) != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()]
+            if digests.get(path.name) != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()]
 
 
 def load_json(path: str | None):
@@ -254,10 +303,11 @@ def load_json(path: str | None):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    make = commands.add_parser("generate", help="Stage the JARs and write jar-index.json")
+    make = commands.add_parser("generate", help="Stage new JARs and write jar-index.json")
     make.add_argument("--repo-root", default=str(ROOT))
     make.add_argument("--android-index", help="Published Android index.json, for iconUrl")
-    make.add_argument("--previous", help="Previously published jar-index.json, if any")
+    make.add_argument("--previous", help="Previously published, verified jar-index.json, if any")
+    make.add_argument("--assets", help="JSON list of {name, digest} assets on the release")
     make.add_argument("--sequence", type=int, help="Override the epoch-seconds sequence")
     make.add_argument("--output", required=True, help="Staging directory")
     signer = commands.add_parser("sign", help="Sign jar-index.json with an Ed25519 PEM key")
@@ -275,7 +325,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "generate":
             index, files = generate(Path(args.repo_root), load_json(args.android_index),
-                                    load_json(args.previous), args.sequence)
+                                    load_json(args.previous), args.sequence,
+                                    asset_digests(load_json(args.assets)))
             output = Path(args.output)
             output.mkdir(parents=True, exist_ok=True)
             for path in files:

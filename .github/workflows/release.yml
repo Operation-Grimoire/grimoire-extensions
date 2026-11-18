@@ -115,15 +115,22 @@ jobs:
         run: |
           mkdir -p build/published
           gh release download latest -p index.json -D build/published
-          gh release download latest -p jar-index.json -D build/published \
-            || echo "No jar-index.json published yet"
+          if gh release download latest -p jar-index.json -p jar-index.json.sig -D build/published; then
+            # Published entries are carried over verbatim, so they must carry the official signature.
+            python scripts/jar_index.py verify --index build/published/jar-index.json
+          else
+            echo "No jar-index.json published yet"
+          fi
           gh api "repos/$GH_REPO/releases/tags/latest" --jq '[.assets[] | {name, digest}]' \
             > build/published/assets.json
+      # A published versionCode keeps its entry and bytes. New bytes need a higher versionCode;
+      # a lower one, or a library change without dependent bumps, fails here.
       - name: Generate the index
         run: |
           python scripts/jar_index.py generate --output build/jar-index \
             --android-index build/published/index.json \
-            --previous build/published/jar-index.json
+            --previous build/published/jar-index.json \
+            --assets build/published/assets.json
       - name: Sign the index
         env:
           JAR_INDEX_SIGNING_KEY: ${{ secrets.JAR_INDEX_SIGNING_KEY }}
@@ -144,7 +151,7 @@ jobs:
             echo "current=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Desktop JAR index skipped::main moved to $head; that run publishes instead."
           fi
-      # JARs first, so the published index never names a missing file.
+      # New JARs first, so the published index never names a missing file.
       - name: Upload the JARs, then the index and signature
         if: steps.head.outputs.current == 'true'
         run: |

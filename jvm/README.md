@@ -162,13 +162,36 @@ The format is defined in the app's
 1. `jar-index-build` runs the script tests and `build_dual.py --jars-only` with
    a read-only token and the pinned API.
 2. `jar-index-publish` runs in the `jar-index-publication` concurrency group.
-   `scripts/jar_index.py generate` writes `jar-index.json`. `sign` signs it with
-   `openssl pkeyutl -sign -rawin` and the `JAR_INDEX_SIGNING_KEY` secret (PEM
-   PKCS#8 Ed25519). `verify` then checks it against the pinned official public
-   key `PYUsj2AvddEkNAiO8Vc2tPskScoilyAdbMG8ZNN/IfM=`. A different key fails the job.
-3. Changed JARs upload first, then `jar-index.json` and `jar-index.json.sig`.
+   It verifies the previously published index with the pinned key, then
+   `scripts/jar_index.py generate` writes `jar-index.json` (policy below). `sign`
+   signs it with `openssl pkeyutl -sign -rawin` and the `JAR_INDEX_SIGNING_KEY`
+   secret (PEM PKCS#8 Ed25519). `verify` then checks it against the pinned
+   official public key `PYUsj2AvddEkNAiO8Vc2tPskScoilyAdbMG8ZNN/IfM=`. A
+   different key fails the job.
+3. New JARs upload first, then `jar-index.json` and `jar-index.json.sig`.
    Nothing is published when `main` has moved on, or when the secret is unset.
    An unset secret only adds a notice. It does not fail the Android release.
+
+Desktop treats an equal `versionCode` with a different `sha256` as a conflict.
+For that reason, published bytes never change under the same version:
+
+- **Pinned version.** A package keeps its previous entry and its published JAR
+  unchanged when both of these hold:
+  - its `versionCode` equals the previous index's;
+  - the release still holds that file with the recorded digest.
+
+  The rebuilt JAR is not uploaded. If its bytes differ, the job adds a notice.
+- **New version.** Only a higher `versionCode` publishes new bytes.
+- **Lower version.** A `versionCode` below the published one fails the job.
+- **Missing asset.** If the previous file is missing from the release, the
+  rebuilt JAR is published instead.
+- **Changed library.** If the shared library's rebuilt bytes differ from the
+  published entry, every extension that lists its coordinate in
+  `hostLibraries` must have a higher `versionCode`. Otherwise the job fails and
+  names the extensions to bump. Each coordinate has exactly one library file.
+- **Name collision.** New bytes never replace a release asset of the same name
+  with different bytes, unless they are an allowed library change. A collision
+  fails the job.
 
 Field sources:
 
@@ -182,8 +205,8 @@ Field sources:
 | `libraries` | Each `io.grimoire` host library coordinate, mapped to its JAR in `jvm/build/host`. `org.json` is supplied by the host. |
 | `sequence` | Generation time in epoch seconds. Always above the previously published value. |
 
-`sha256` warnings flag a JAR whose bytes changed without a `versionCode` bump.
-Desktop treats such an entry as a conflict for existing installs.
+On `main`, `lib` still builds as `io.grimoire:extensions-lib:1.0.0-SNAPSHOT`.
+Moving the JAR index to a released library coordinate is follow-up work.
 
 To reproduce locally with a throwaway key:
 
@@ -192,5 +215,6 @@ To reproduce locally with a throwaway key:
 openssl genpkey -algorithm ed25519 -out /tmp/key.pem
 python scripts/jar_index.py generate --output build/jar-index --android-index index.json
 python scripts/jar_index.py sign --index build/jar-index/jar-index.json --key /tmp/key.pem
-python scripts/jar_index.py verify --index build/jar-index/jar-index.json   --public-key "$(openssl pkey -in /tmp/key.pem -pubout -outform DER | tail -c 32 | base64)"
+python scripts/jar_index.py verify --index build/jar-index/jar-index.json \
+  --public-key "$(openssl pkey -in /tmp/key.pem -pubout -outform DER | tail -c 32 | base64)"
 ```

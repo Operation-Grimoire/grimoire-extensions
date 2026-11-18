@@ -99,3 +99,8 @@ across all sibling repos, edit extensions-ci and move the `v2` tag (or cut a new
 `v2.x.y`); to change repo-specific behavior, edit the stubs here. `index.json`
 carries each source's `adultContent` rating and `novelUpdatesGroups`, emitted by
 the generator from `@SourceInfo`.
+
+`release.yml` also has repo-specific jobs that publish the signed Desktop
+`jar-index.json` and thin JARs to the same `latest` release
+(`scripts/jar_index.py`, documented in `jvm/README.md`). They skip with a
+notice when the `JAR_INDEX_SIGNING_KEY` secret is unset.

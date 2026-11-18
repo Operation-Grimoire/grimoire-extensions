@@ -148,6 +148,100 @@ The new offline contract does not close that live acceptance issue.
 
 Every extension under `src/<language>/<name>` still gets a thin JAR from that same
 directory. No Android/JVM parser forks or generated source copies are introduced.
-A maintained desktop host, real browser adapters, signed JAR distribution,
-release indexes, reusable `extensions-ci` integration and publication remain
-later work. See [local validation](validation.md) for the earlier Royal Road proof.
+A maintained desktop host, real browser adapters and reusable `extensions-ci`
+integration remain later work. See [local validation](validation.md) for the
+earlier Royal Road proof.
+
+## Signed JAR index
+
+Every main-branch run of `release.yml` publishes the Desktop catalog next to
+Android's `index.json` on the `latest` release, after the APK release succeeds.
+The format is defined in the app's
+[desktop extension contract](https://github.com/Operation-Grimoire/grimoire/blob/master/docs/desktop-extensions.md).
+
+1. `jar-index-build` runs the script tests and `build_dual.py --jars-only` with
+   a read-only token and the pinned API.
+2. `jar-index-publish` runs in the `jar-index-publication` concurrency group.
+   `scripts/jar_index.py recover` chooses the previous index (recovery below).
+   `generate` writes `jar-index.json` (policy below). `sign` signs it with
+   `openssl pkeyutl -sign -rawin` and the `JAR_INDEX_SIGNING_KEY` secret (PEM
+   PKCS#8 Ed25519). `verify` then checks it against the pinned official public
+   key `PYUsj2AvddEkNAiO8Vc2tPskScoilyAdbMG8ZNN/IfM=`. A different key fails the
+   job.
+3. Uploads run in this order: new artifacts, then the immutable pair
+   `jar-index-<sequence>.json` and `jar-index-<sequence>.json.sig`, then
+   `jar-index.json` and `jar-index.json.sig`. Only the canonical pair is ever
+   replaced. Versioned pairs beyond the newest five are deleted afterwards.
+   Two decisions are made separately:
+   - Artifacts the index lists but the release lacks are uploaded, even when
+     the index is otherwise unchanged.
+   - A new index pair is published only when the index changed apart from its
+     sequence, or when the canonical pair is not current.
+
+   Nothing is published in these cases:
+   - `main` has moved on;
+   - the release already holds the current index and every artifact it lists;
+   - the secret is unset. This only adds a notice and does not fail the Android
+     release.
+
+Recovery. `recover` verifies the canonical pair and every versioned pair with
+the pinned key, then uses the verifying index with the highest sequence. A
+versioned pair must also contain the sequence its file name states. When the
+canonical pair is missing, mismatched or older, the job logs a warning, uses
+that versioned pair, and republishes the canonical pair. A rerun after an
+interrupted upload therefore repairs the release.
+
+A first publication starts only when no pair and no canonical index exist. If
+pairs exist but none verifies, the job fails. Index files without a signature
+are ignored with a warning.
+
+Desktop treats an equal `versionCode` with a different `sha256` as a conflict.
+For that reason, published bytes never change under the same version:
+
+- **Pinned version.** A package keeps its previous entry and its published JAR
+  unchanged when both of these hold:
+  - its `versionCode` equals the previous index's;
+  - the release still holds that file with the recorded digest.
+
+  The rebuilt JAR is not uploaded. If its bytes differ, the job adds a notice.
+- **New version.** Only a higher `versionCode` publishes new bytes.
+- **Lower version.** A `versionCode` below the published one fails the job.
+- **Missing asset.** If the previous file is missing from the release and the
+  rebuild has the same bytes as the signed entry, it is restored under its
+  signed name. If the bytes differ, the job fails and asks for a `versionCode`
+  bump.
+- **Changed library.** If the shared library's rebuilt bytes differ from the
+  previous signed entry, even when its asset is missing, every extension that lists its coordinate in
+  `hostLibraries` must have a higher `versionCode`. Otherwise the job fails and
+  names the extensions to bump. Each index lists one library per coordinate.
+  The library file name is content-addressed, as
+  `extensions-lib-<version>-<first 12 hex of sha256>.jar`. A changed library is
+  therefore a new file, and older indexes keep pointing at their own bytes.
+- **Name collision.** New bytes never replace a release asset of the same name
+  with different bytes. A collision fails the job.
+
+Field sources:
+
+| Field | Source |
+| --- | --- |
+| `pkg`, `sourceClass`, `versionCode`, `versionName`, `sourceVersionCode`, `coreApi`, `hostLibraries` | The JAR's `Grimoire-*` manifest. Must equal `identity.json`. |
+| `file`, `sha256`, `size` | The JAR bytes. Over 20 MiB is rejected. |
+| `name`, `adultContent` | `@SourceInfo`, as in the Android index generator. |
+| `lang` | A string `@SourceInfo` lang, otherwise the `src/<language>` directory, as in `index.json`. |
+| `iconUrl` | The same package's `iconUrl` in the published `index.json`. Left out with a warning when absent. |
+| `libraries` | Each `io.grimoire` host library coordinate, mapped to its JAR in `jvm/build/host`. The published `file` is content-addressed. `org.json` is supplied by the host. |
+| `sequence` | Generation time in epoch seconds. Always above the previously published value. |
+
+On `main`, `lib` still builds as `io.grimoire:extensions-lib:1.0.0-SNAPSHOT`.
+Moving the JAR index to a released library coordinate is follow-up work.
+
+To reproduce locally with a throwaway key:
+
+```sh
+./gradlew -p jvm jars
+openssl genpkey -algorithm ed25519 -out /tmp/key.pem
+python scripts/jar_index.py generate --output build/jar-index --android-index index.json
+python scripts/jar_index.py sign --index build/jar-index/jar-index.json --key /tmp/key.pem
+python scripts/jar_index.py verify --index build/jar-index/jar-index.json \
+  --public-key "$(openssl pkey -in /tmp/key.pem -pubout -outform DER | tail -c 32 | base64)"
+```

@@ -10,7 +10,7 @@ and a thin JVM JAR. `settings.gradle.kts` picks up any such directory with a
 `build.gradle.kts` as module `:{lang}-{name}`; the JVM build (`jvm/`) and
 Extension Inspector discover it the same way. Nothing else needs registering.
 
-Read `CLAUDE.md`/the repo root instructions first — versioning, `minimumApi` and
+Read `AGENTS.md` at the repo root first — versioning, `minimumApi` and
 `lib/` rules there are binding. Commands below use `./gradlew`; on Windows
 PowerShell use `.\gradlew.bat`.
 

@@ -6,7 +6,7 @@ plugins {
 // Publication version. The publish-lib workflow builds from a lib-vX.Y.Z tag
 // and sets LIB_RELEASE_TAG to publish the immutable release X.Y.Z. Every other
 // build (main, local) publishes a -SNAPSHOT of the next version for cross-repo
-// development; bump the base below when a release is cut. See CLAUDE.md.
+// development; bump the base below when a release is cut. See AGENTS.md.
 val publishVersion: String =
     System.getenv("LIB_RELEASE_TAG")
         ?.trim()

@@ -100,6 +100,36 @@ class ArabNovelsTest {
     }
 
     @Test
+    fun `JSON nulls never become the text null or lock a free chapter`() {
+        val rows = JSONArray().put(
+            JSONObject().put("number", 5).put("title", JSONObject.NULL).put("access", JSONObject.NULL)
+                .put("publishedAt", JSONObject.NULL),
+        )
+        val flight = "{\"slug\":\"the-strange\",\"chapters\":$rows}"
+        val chapters = source.chapters(
+            Jsoup.parse("<script>self.__next_f.push(${JSONArray().put(1).put(flight)})</script>", source.baseUrl),
+            novelUrl,
+        )
+        assertEquals("الفصل 5", chapters.single().name)
+        assertEquals(false, chapters.single().locked)
+        assertEquals(0L, chapters.single().uploadDate)
+
+        val book = JSONObject().put("@type", "Book").put("name", "الغريب")
+            .put("author", JSONObject().put("name", JSONObject.NULL))
+            .put("description", JSONObject.NULL)
+            .put("image", JSONObject.NULL)
+            .put("genre", JSONArray().put(JSONObject.NULL).put("غموض"))
+        val details = source.details(
+            Jsoup.parse("""<script type="application/ld+json">$book</script>""", source.baseUrl),
+            Novel(novelUrl, "", Language.AR, description = "previous"),
+        )
+        assertEquals(null, details.author)
+        assertEquals("previous", details.description)
+        assertEquals(null, details.thumbnailUrl)
+        assertEquals(listOf("غموض"), details.genres)
+    }
+
+    @Test
     fun `chapter list fails rather than returning the truncated HTML list`() {
         val document = Jsoup.parse("""<ol><li><a href="/read/the-strange/2">2</a></li></ol>""", source.baseUrl)
         assertThrows<IOException> { source.chapters(document, novelUrl) }

@@ -120,20 +120,20 @@ class ArabNovels :
     internal fun details(document: Document, novel: Novel): Novel {
         val book = document.select("script[type=application/ld+json]")
             .mapNotNull { runCatching { JSONObject(it.data()) }.getOrNull() }
-            .firstOrNull { it.optString("@type") == "Book" }
-        val title = book?.optString("name")?.trim()?.ifEmpty { null }
+            .firstOrNull { it.text("@type") == "Book" }
+        val title = book?.text("name")
             ?: document.selectFirst("article h1")?.text()?.trim()?.ifEmpty { null }
             ?: throw IOException("Arab Novels: novel details unavailable")
         val genres = book?.optJSONArray("genre")?.let { array ->
-            (0 until array.length()).mapNotNull { array.optString(it).trim().ifEmpty { null } }
+            (0 until array.length()).mapNotNull { array.text(it) }
         }.orEmpty()
         val status = document.select("section[aria-labelledby=chapters-heading] p")
             .firstOrNull { it.text().startsWith("الحالة") }?.text()
         return novel.copy(
             title = title,
-            author = book?.optJSONObject("author")?.optString("name")?.trim()?.ifEmpty { null } ?: novel.author,
-            description = book?.optString("description")?.trim()?.ifEmpty { null } ?: novel.description,
-            thumbnailUrl = cover(book?.optString("image")) ?: novel.thumbnailUrl,
+            author = book?.optJSONObject("author")?.text("name") ?: novel.author,
+            description = book?.text("description") ?: novel.description,
+            thumbnailUrl = cover(book?.text("image")) ?: novel.thumbnailUrl,
             genres = genres,
             status = when {
                 status == null -> NovelStatus.UNKNOWN
@@ -165,13 +165,13 @@ class ArabNovels :
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
             val number = row.optDouble("number").takeIf { it.isFinite() && it >= 0 } ?: return@mapNotNull null
             val label = formatNumber(number)
-            val title = row.optString("title").trim()
+            val title = row.text("title")
             Chapter(
                 url = "$baseUrl/read/$slug/$label",
-                name = if (title.isEmpty()) "الفصل $label" else "الفصل $label: $title",
-                uploadDate = runCatching { Instant.parse(row.optString("publishedAt")).toEpochMilli() }.getOrDefault(0L),
+                name = if (title == null) "الفصل $label" else "الفصل $label: $title",
+                uploadDate = runCatching { Instant.parse(row.text("publishedAt")).toEpochMilli() }.getOrDefault(0L),
                 chapterNumber = number.toFloat(),
-                locked = row.optString("access", "FREE") != "FREE",
+                locked = (row.text("access") ?: "FREE") != "FREE",
             )
         }.distinctBy { it.url }.sortedBy { it.chapterNumber }
     }
@@ -182,7 +182,7 @@ class ArabNovels :
             val data = script.data().trim()
             if (!data.startsWith(FLIGHT_PREFIX) || !data.endsWith(")")) continue
             val chunk = runCatching { JSONArray(data.substring(FLIGHT_PREFIX.length, data.length - 1)) }.getOrNull()
-            if (chunk?.optInt(0) == 1) append(chunk.optString(1))
+            if (chunk?.optInt(0) == 1) chunk.text(1)?.let(::append)
         }
     }
 
@@ -225,6 +225,11 @@ class ArabNovels :
 
     private fun sourceUrl(url: String): String? =
         url.toHttpUrlOrNull()?.takeIf { it.isHttps && it.host == "arabnovels.com" && it.port == 443 }?.toString()
+
+    // Android's org.json turns JSON null into the string "null" in optString; read nulls explicitly.
+    private fun JSONObject.text(key: String): String? = if (isNull(key)) null else optString(key).trim().ifEmpty { null }
+
+    private fun JSONArray.text(index: Int): String? = if (isNull(index)) null else optString(index).trim().ifEmpty { null }
 
     private fun formatNumber(number: Double): String =
         if (number % 1.0 == 0.0) number.toLong().toString() else number.toBigDecimal().stripTrailingZeros().toPlainString()

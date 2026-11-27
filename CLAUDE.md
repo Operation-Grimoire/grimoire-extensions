@@ -20,6 +20,12 @@ browser backed by a generated `index.json`.
   override the `grimoire_extension_min_api` string resource with that value.
   The JVM build reads the same declaration for `Grimoire-Core-Api`.
 
+## Adding a new extension
+
+Follow the agent-neutral skill at `.agents/skills/add-extension/SKILL.md`:
+site investigation, scaffold, implementation rules, tests, JVM JAR, and a live
+Extension Inspector run.
+
 ## Versioning — bump on every change to an extension
 
 When you change an extension's behaviour (parsing, fetching — anything that
